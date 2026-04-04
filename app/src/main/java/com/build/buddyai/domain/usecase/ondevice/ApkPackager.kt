@@ -76,7 +76,7 @@ class ApkPackager(
 
         try {
             val pkBytes = pk8.readBytes()
-            val keySpec = java.security.spec.PK8EncodedKeySpec(pkBytes)
+            val keySpec = java.security.spec.PKCS8EncodedKeySpec(pkBytes)
             val privateKey = java.security.KeyFactory.getInstance("RSA").generatePrivate(keySpec)
             val certFactory = java.security.cert.CertificateFactory.getInstance("X.509")
             val cert = x509.inputStream().use { certFactory.generateCertificate(it) }
