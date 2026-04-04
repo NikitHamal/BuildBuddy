@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Background circle -->
+    <path
+        android:fillColor="#C4956A"
+        android:pathData="M54,54m-40,0a40,40 0,1 1,80 0a40,40 0,1 1,-80 0" />
+    <!-- Inner geometric pattern - sacred geometry inspired -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,26L54,26L72,42L72,66L54,82L36,66L36,42Z"
+        android:strokeWidth="1.5"
+        android:strokeColor="#FFFFFF" />
+    <!-- Center diamond -->
+    <path
+        android:fillColor="#1A1814"
+        android:pathData="M54,38L62,54L54,70L46,54Z" />
+    <!-- Code brackets -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,48L38,54L44,60"
+        android:strokeWidth="2.5"
+        android:strokeColor="#FFFFFF"
+        android:fillType="nonZero"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M64,48L70,54L64,60"
+        android:strokeWidth="2.5"
+        android:strokeColor="#FFFFFF"
+        android:fillType="nonZero"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>
