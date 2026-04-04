@@ -166,7 +166,7 @@ fun AgentTab(
 }
 
 @Composable
-private fun ChatMessageItem(message: ChatMessage) {
+internal fun ChatMessageItem(message: ChatMessage) {
     val isUser = message.role == MessageRole.USER
     val isError = message.status == MessageStatus.ERROR
 
@@ -232,7 +232,7 @@ private fun ChatMessageItem(message: ChatMessage) {
 }
 
 @Composable
-private fun ActionTimelineItem(action: AgentAction) {
+internal fun ActionTimelineItem(action: AgentAction) {
     Row(
         modifier = Modifier.padding(start = NvSpacing.Xxl),
         verticalAlignment = Alignment.CenterVertically
@@ -248,7 +248,7 @@ private fun ActionTimelineItem(action: AgentAction) {
 }
 
 @Composable
-private fun DiffReviewCard(
+internal fun DiffReviewCard(
     diffs: List<FileDiff>,
     onApply: () -> Unit,
     onReject: () -> Unit

@@ -26,8 +26,11 @@ fun SettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+    val snackbarHostState = remember { SnackbarHostState() }
+
     LaunchedEffect(uiState.lastOperationMessage) {
-        uiState.lastOperationMessage?.let {
+        if (uiState.lastOperationMessage != null) {
+            snackbarHostState.showSnackbar(uiState.lastOperationMessage!!)
             viewModel.clearOperationMessage()
         }
     }
@@ -39,22 +42,7 @@ fun SettingsScreen(
                 navigationIcon = { NvBackButton(onBack) }
             )
         },
-        snackbarHost = {
-            SnackbarHost(
-                modifier = Modifier.padding(NvSpacing.Md)
-            ) {
-                Snackbar(
-                    modifier = Modifier.padding(bottom = NvSpacing.Md),
-                    containerColor = MaterialTheme.colorScheme.inverseSurface,
-                    contentColor = MaterialTheme.colorScheme.inverseOnSurface
-                ) {
-                    Text(
-                        text = uiState.lastOperationMessage.orEmpty(),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
-        }
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
