@@ -28,6 +28,12 @@ composeAnimation = "1.7.6"
 timber = "5.0.1"
 desugar = "2.1.4"
 errorprone = "2.31.0"
+ecj = "3.26.0"
+r8 = "8.11.18"
+sdklib = "31.8.0"
+zipalignJava = "1.2.2"
+scpkixJdk15on = "1.47.0.2"
+staxApi = "1.0-2"
 junit = "4.13.2"
 junitExt = "1.2.1"
 espresso = "3.6.1"
@@ -104,6 +110,14 @@ desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", ver
 
 # Errorprone annotations (required by Tink via security-crypto)
 errorprone-annotations = { group = "com.google.errorprone", name = "error_prone_annotations", version.ref = "errorprone" }
+
+# On-device build pipeline tools (Sketchware-style)
+ecj = { group = "org.eclipse.jdt", name = "ecj", version.ref = "ecj" }
+r8 = { group = "com.android.tools", name = "r8", version.ref = "r8" }
+sdklib = { group = "com.android.tools", name = "sdklib", version.ref = "sdklib" }
+zipalign-java = { group = "com.github.Iyxan23", name = "zipalign-java", version.ref = "zipalignJava" }
+scpkix-jdk15on = { group = "com.madgag", name = "scpkix-jdk15on", version.ref = "scpkixJdk15on" }
+stax-api = { group = "javax.xml.stream", name = "stax-api", version.ref = "staxApi" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }

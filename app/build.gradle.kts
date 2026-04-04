@@ -82,6 +82,10 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "license/*"
+            pickFirsts += "META-INF/INDEX.LIST"
+            pickFirsts += "META-INF/io.netty.versions.properties"
         }
     }
 }
@@ -155,6 +159,16 @@ dependencies {
 
     // Logging
     implementation(libs.timber)
+
+    // On-device build pipeline (Sketchware-style: no JDK needed)
+    implementation(libs.ecj)                // Eclipse Java Compiler - runs in-process on ART
+    implementation(libs.r8)                 // D8/R8 DEX compiler - runs in-process on ART
+    implementation(libs.sdklib) {           // ApkBuilder for packaging
+        exclude(group = "com.intellij", module = "annotations")
+    }
+    implementation(libs.zipalign.java)      // Pure-Java ZIP alignment
+    implementation(libs.scpkix.jdk15on)     // APK signing crypto
+    implementation(libs.stax.api)           // XML streaming (ECJ dep)
 
     // Testing
     testImplementation(libs.junit)
