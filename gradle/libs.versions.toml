@@ -27,6 +27,7 @@ accompanist = "0.36.0"
 composeAnimation = "1.7.6"
 timber = "5.0.1"
 desugar = "2.1.4"
+errorprone = "2.31.0"
 junit = "4.13.2"
 junitExt = "1.2.1"
 espresso = "3.6.1"
@@ -100,6 +101,9 @@ timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "tim
 
 # Desugar
 desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugar" }
+
+# Errorprone annotations (required by Tink via security-crypto)
+errorprone-annotations = { group = "com.google.errorprone", name = "error_prone_annotations", version.ref = "errorprone" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }

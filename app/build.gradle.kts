@@ -151,6 +151,7 @@ dependencies {
 
     // Security
     implementation(libs.androidx.security.crypto)
+    compileOnly(libs.errorprone.annotations)
 
     // Logging
     implementation(libs.timber)
