@@ -3,6 +3,7 @@ package com.build.buddyai.core.di
 import android.content.Context
 import androidx.room.Room
 import com.build.buddyai.core.data.local.BuildBuddyDatabase
+import com.build.buddyai.core.data.local.MIGRATION_1_2
 import com.build.buddyai.core.data.local.dao.*
 import dagger.Module
 import dagger.Provides
@@ -22,7 +23,10 @@ object DatabaseModule {
             context,
             BuildBuddyDatabase::class.java,
             "buildbuddy.db"
-        ).fallbackToDestructiveMigration().build()
+        )
+        .addMigrations(MIGRATION_1_2)
+        .fallbackToDestructiveMigration()
+        .build()
     }
 
     @Provides fun provideProjectDao(db: BuildBuddyDatabase): ProjectDao = db.projectDao()

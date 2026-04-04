@@ -7,6 +7,7 @@ import com.build.buddyai.core.model.*
 import com.build.buddyai.core.network.ModelCatalog
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.builtins.ListSerializer
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,11 +27,32 @@ class ProviderRepository @Inject constructor(
                     isConfigured = config != null && secureKeyStore.hasApiKey(type.name),
                     isDefault = config?.isDefault ?: false,
                     selectedModelId = config?.selectedModelId,
-                    models = ModelCatalog.getModelsForProvider(type),
-                    parameters = config?.toProviderConfig()?.parameters ?: ModelParameters()
+                    models = config?.cachedModels?.let { parseCachedModels(it) } ?: emptyList(),
+                    parameters = config?.toProviderConfig()?.parameters ?: ModelParameters(),
+                    cachedModels = config?.cachedModels?.let { parseCachedModels(it) } ?: emptyList(),
+                    lastModelFetchTime = config?.lastModelFetchTime
                 )
             }
         }
+
+    private fun parseCachedModels(json: String): List<AiModel> = try {
+        kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+            .decodeFromString<List<AiModel>>(json)
+    } catch (e: Exception) { emptyList() }
+
+    suspend fun updateProviderModels(providerType: ProviderType, models: List<AiModel>) {
+        val config = providerConfigDao.getProviderConfig(providerType.name)
+        val json = kotlinx.serialization.json.Json { encodeDefaults = true }
+            .encodeToString(ListSerializer(AiModel.serializer()), models)
+        if (config != null) {
+            providerConfigDao.updateProviderConfig(
+                config.copy(
+                    cachedModels = json,
+                    lastModelFetchTime = System.currentTimeMillis()
+                )
+            )
+        }
+    }
 
     suspend fun getDefaultProvider(): AiProvider? {
         val config = providerConfigDao.getDefaultProvider()?.toProviderConfig() ?: return null

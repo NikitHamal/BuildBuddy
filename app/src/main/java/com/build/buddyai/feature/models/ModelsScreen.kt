@@ -21,6 +21,7 @@ import com.build.buddyai.core.designsystem.theme.*
 import com.build.buddyai.core.model.AiModel
 import com.build.buddyai.core.model.AiProvider
 import com.build.buddyai.core.model.ProviderType
+import java.util.concurrent.TimeUnit
 
 @Composable
 fun ModelsScreen(
@@ -49,10 +50,13 @@ fun ModelsScreen(
                     isExpanded = uiState.expandedProvider == provider.type,
                     isTesting = uiState.testingProvider == provider.type,
                     testResult = uiState.testResults[provider.type],
+                    isFetchingModels = uiState.fetchingModels.contains(provider.type),
+                    modelFetchError = uiState.modelFetchErrors[provider.type],
                     onToggleExpand = { viewModel.toggleProviderExpand(provider.type) },
                     onApiKeyChange = { viewModel.updateApiKeyInput(provider.type, it) },
                     onSave = { viewModel.saveProvider(provider.type) },
                     onTest = { viewModel.testConnection(provider.type) },
+                    onRefreshModels = { viewModel.refreshModels(provider.type) },
                     onSetDefault = { viewModel.setDefaultProvider(provider.type.name) },
                     onRemove = { viewModel.removeProvider(provider.type.name) },
                     onSelectModel = { viewModel.selectModel(provider.type.name, it) },
@@ -72,10 +76,13 @@ private fun ProviderCard(
     isExpanded: Boolean,
     isTesting: Boolean,
     testResult: String?,
+    isFetchingModels: Boolean,
+    modelFetchError: String?,
     onToggleExpand: () -> Unit,
     onApiKeyChange: (String) -> Unit,
     onSave: () -> Unit,
     onTest: () -> Unit,
+    onRefreshModels: (ProviderType) -> Unit,
     onSetDefault: () -> Unit,
     onRemove: () -> Unit,
     onSelectModel: (String) -> Unit,
@@ -179,14 +186,56 @@ private fun ProviderCard(
                 // Model selection
                 if (provider.isConfigured) {
                     Spacer(Modifier.height(NvSpacing.Sm))
-                    Text(stringResource(R.string.models_select_model), style = MaterialTheme.typography.labelLarge)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(stringResource(R.string.models_select_model), style = MaterialTheme.typography.labelLarge)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (provider.cachedModels.isNotEmpty() && provider.lastModelFetchTime != null) {
+                                val timeAgo = getTimeAgo(provider.lastModelFetchTime!!)
+                                Text(timeAgo, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.width(NvSpacing.Xxs))
+                            }
+                            IconButton(onClick = { onRefreshModels(provider.type) }, enabled = !isFetchingModels) {
+                                Icon(
+                                    if (isFetchingModels) Icons.Filled.HourglassTop else Icons.Filled.Refresh,
+                                    contentDescription = "Refresh models",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
                     Spacer(Modifier.height(NvSpacing.Xxs))
-                    provider.models.forEach { model ->
-                        ModelSelectionItem(
-                            model = model,
-                            isSelected = model.id == provider.selectedModelId,
-                            onSelect = { onSelectModel(model.id) }
+
+                    if (isFetchingModels) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = NvSpacing.Md),
+                            contentAlignment = androidx.compose.ui.Alignment.Center
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        }
+                    } else if (modelFetchError != null) {
+                        Text(
+                            "Failed to load models: $modelFetchError",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
                         )
+                    } else if (provider.cachedModels.isEmpty()) {
+                        Text(
+                            "No models found. Tap refresh to fetch.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        provider.cachedModels.forEach { model ->
+                            ModelSelectionItem(
+                                model = model,
+                                isSelected = model.id == provider.selectedModelId,
+                                onSelect = { onSelectModel(model.id) }
+                            )
+                        }
                     }
 
                     // Advanced parameters
@@ -288,5 +337,15 @@ private fun ModelSelectionItem(
             }
         }
         Text("${model.contextWindow / 1000}K", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private fun getTimeAgo(timestampMs: Long): String {
+    val diff = System.currentTimeMillis() - timestampMs
+    return when {
+        diff < TimeUnit.MINUTES.toMillis(1) -> "Just now"
+        diff < TimeUnit.HOURS.toMillis(1) -> "${TimeUnit.MILLISECONDS.toMinutes(diff)}m ago"
+        diff < TimeUnit.DAYS.toMillis(1) -> "${TimeUnit.MILLISECONDS.toHours(diff)}h ago"
+        else -> "${TimeUnit.MILLISECONDS.toDays(diff)}d ago"
     }
 }

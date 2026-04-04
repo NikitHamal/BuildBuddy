@@ -15,7 +15,9 @@ data class ProviderConfigEntity(
     val isDefault: Boolean,
     val temperature: Float,
     val maxTokens: Int,
-    val topP: Float
+    val topP: Float,
+    val cachedModels: String = "",
+    val lastModelFetchTime: Long? = null
 ) {
     fun toProviderConfig() = ProviderConfig(
         providerId = providerId,

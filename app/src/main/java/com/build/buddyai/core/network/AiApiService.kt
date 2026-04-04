@@ -15,6 +15,29 @@ class AiApiService @Inject constructor(
     private val client: OkHttpClient,
     private val json: Json
 ) {
+    suspend fun fetchModels(
+        providerType: ProviderType,
+        apiKey: String
+    ): Result<List<com.build.buddyai.core.model.AiModel>> = withContext(Dispatchers.IO) {
+        try {
+            val request = when (providerType) {
+                ProviderType.NVIDIA -> buildNvidiaModelsRequest(apiKey)
+                ProviderType.OPENROUTER -> buildOpenRouterModelsRequest(apiKey)
+                ProviderType.GEMINI -> buildGeminiModelsRequest(apiKey)
+            }
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val body = response.body?.string() ?: return@withContext Result.failure(Exception("Empty response"))
+                val models = parseModels(providerType, body)
+                Result.success(models)
+            } else {
+                Result.failure(Exception("Failed to fetch models: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception("Network error: ${e.message}"))
+        }
+    }
+
     suspend fun testConnection(providerType: ProviderType, apiKey: String): Result<Boolean> =
         withContext(Dispatchers.IO) {
             try {
@@ -216,6 +239,84 @@ class AiApiService @Inject constructor(
             .addHeader("Content-Type", "application/json")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
+    }
+
+    private fun buildNvidiaModelsRequest(apiKey: String): Request {
+        return Request.Builder()
+            .url("${ProviderType.NVIDIA.baseUrl}/models")
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .get()
+            .build()
+    }
+
+    private fun buildOpenRouterModelsRequest(apiKey: String): Request {
+        return Request.Builder()
+            .url("${ProviderType.OPENROUTER.baseUrl}/models")
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .addHeader("HTTP-Referer", "com.build.buddyai")
+            .addHeader("X-Title", "BuildBuddy")
+            .get()
+            .build()
+    }
+
+    private fun buildGeminiModelsRequest(apiKey: String): Request {
+        return Request.Builder()
+            .url("${ProviderType.GEMINI.baseUrl}/models?key=$apiKey")
+            .addHeader("Content-Type", "application/json")
+            .get()
+            .build()
+    }
+
+    private fun parseModels(
+        providerType: ProviderType,
+        responseBody: String
+    ): List<com.build.buddyai.core.model.AiModel> {
+        val jsonResponse = json.parseToJsonElement(responseBody).jsonObject
+        val rawModels = when (providerType) {
+            ProviderType.NVIDIA, ProviderType.OPENROUTER -> {
+                jsonResponse["data"]?.jsonArray ?: emptyList()
+            }
+            ProviderType.GEMINI -> {
+                jsonResponse["models"]?.jsonArray ?: emptyList()
+            }
+        }
+
+        return rawModels.mapNotNull { modelElement ->
+            val modelObj = modelElement.jsonObject
+            val id = when (providerType) {
+                ProviderType.NVIDIA, ProviderType.OPENROUTER -> {
+                    modelObj["id"]?.jsonPrimitive?.content
+                }
+                ProviderType.GEMINI -> {
+                    modelObj["name"]?.jsonPrimitive?.content?.removePrefix("models/")
+                }
+            } ?: return@mapNotNull null
+
+            // Filter out deprecated Gemini 1.5 Pro models
+            if (id.contains("1.5-pro", ignoreCase = true) ||
+                (id.contains("gemini-pro", ignoreCase = true) && !id.contains("2.", ignoreCase = true))) {
+                return@mapNotNull null
+            }
+
+            val contextWindow = modelObj["context_length"]?.jsonPrimitive?.long?.toInt()
+                ?: modelObj["input_token_limit"]?.jsonPrimitive?.long?.toInt()
+                ?: 4096
+
+            val name = modelObj["name"]?.jsonPrimitive?.content
+                ?: id.substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
+
+            com.build.buddyai.core.model.AiModel(
+                id = id,
+                name = name,
+                providerId = providerType.name,
+                providerType = providerType,
+                contextWindow = contextWindow,
+                supportsStreaming = true,
+                description = ""
+            )
+        }
     }
 
     private fun extractContent(providerType: ProviderType, responseBody: String): String {

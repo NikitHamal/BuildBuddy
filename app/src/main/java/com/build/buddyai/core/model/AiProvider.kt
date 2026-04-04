@@ -11,8 +11,14 @@ data class AiProvider(
     val isDefault: Boolean = false,
     val selectedModelId: String? = null,
     val models: List<AiModel> = emptyList(),
-    val parameters: ModelParameters = ModelParameters()
-)
+    val parameters: ModelParameters = ModelParameters(),
+    val cachedModels: List<AiModel> = emptyList(),
+    val lastModelFetchTime: Long? = null
+) {
+    companion object {
+        const val MODEL_CACHE_DURATION_MS = 24 * 60 * 60 * 1000L // 24 hours
+    }
+}
 
 @Serializable
 enum class ProviderType(

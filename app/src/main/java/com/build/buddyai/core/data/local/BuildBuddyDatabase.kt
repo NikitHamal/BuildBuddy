@@ -2,6 +2,8 @@ package com.build.buddyai.core.data.local
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.room.sqlite.SQLiteStatement
 import com.build.buddyai.core.data.local.dao.*
 import com.build.buddyai.core.data.local.entity.*
 
@@ -14,7 +16,7 @@ import com.build.buddyai.core.data.local.entity.*
         ArtifactEntity::class,
         ProviderConfigEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = true
 )
 abstract class BuildBuddyDatabase : RoomDatabase() {
@@ -23,4 +25,11 @@ abstract class BuildBuddyDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
     abstract fun artifactDao(): ArtifactDao
     abstract fun providerConfigDao(): ProviderConfigDao
+}
+
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(statement: SQLiteStatement) {
+        statement.executeUpdateDelete("ALTER TABLE provider_configs ADD COLUMN cached_models TEXT NOT NULL DEFAULT ''")
+        statement.executeUpdateDelete("ALTER TABLE provider_configs ADD COLUMN last_model_fetch_time INTEGER")
+    }
 }
