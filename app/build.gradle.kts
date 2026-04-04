@@ -87,6 +87,12 @@ android {
             pickFirsts += "META-INF/INDEX.LIST"
             pickFirsts += "META-INF/io.netty.versions.properties"
         }
+        jniLibs {
+            // Force physical extraction of .so files to nativeLibraryDir on install.
+            // Without this, modern Android keeps libs inside the APK (dlopen-only),
+            // making them invisible to ProcessBuilder/execve — which is how we run aapt2.
+            useLegacyPackaging = true
+        }
     }
 
     // Keep build tool archives uncompressed so openFd() size-comparison works for update detection.
