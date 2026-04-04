@@ -10,7 +10,7 @@ import java.util.zip.ZipInputStream
  * Manages extraction and caching of build tools (aapt2, android.jar, testkey)
  * from the app's assets to the device's internal storage.
  *
- * All tools run on the device's ART runtime — no JDK required.
+ * All tools run on the device's ART runtime - no JDK required.
  */
 object OnDeviceBuildEnvironment {
 
@@ -30,24 +30,21 @@ object OnDeviceBuildEnvironment {
         if (initialized) return
         val toolsDir = File(context.filesDir, "build_tools").also { it.mkdirs() }
 
-        // Extract AAPT2 native binary for this device's ABI
         aapt2Binary = extractAapt2(context, toolsDir)
 
-        // Extract android.jar (compressed as android.jar.zip inside assets)
         androidJar = File(toolsDir, "android.jar")
-        extractIfChanged(context, "$ASSETS_PREFIX/android.jar.zip", File(toolsDir, "android.jar.zip"))
+        val androidJarZip = File(toolsDir, "android.jar.zip")
+        extractAsset(context, "$ASSETS_PREFIX/android.jar.zip", androidJarZip)
         if (!androidJar.exists() || androidJar.length() == 0L) {
-            unzip(File(toolsDir, "android.jar.zip"), toolsDir)
+            unzip(androidJarZip, toolsDir)
         }
 
-        // Extract core-lambda-stubs.jar directly
         coreLambdaStubsJar = File(toolsDir, "core-lambda-stubs.jar")
-        extractIfChanged(context, "$ASSETS_PREFIX/core-lambda-stubs.jar", coreLambdaStubsJar)
+        extractAsset(context, "$ASSETS_PREFIX/core-lambda-stubs.jar", coreLambdaStubsJar)
 
-        // Extract testkey.zip → testkey/
         val testkeyZip = File(toolsDir, "testkey.zip")
         testkeyDir = File(toolsDir, "testkey")
-        extractIfChanged(context, "$ASSETS_PREFIX/testkey.zip", testkeyZip)
+        extractAsset(context, "$ASSETS_PREFIX/testkey.zip", testkeyZip)
         if (!testkeyDir.exists() || testkeyDir.list().isNullOrEmpty()) {
             testkeyDir.mkdirs()
             unzip(testkeyZip, testkeyDir)
@@ -56,18 +53,15 @@ object OnDeviceBuildEnvironment {
         initialized = true
     }
 
-    /** Re-initialize on next call (e.g. after app update). */
-    fun reset() { initialized = false }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // Private helpers
-    // ──────────────────────────────────────────────────────────────────────────
+    fun reset() {
+        initialized = false
+    }
 
     private fun extractAapt2(context: Context, toolsDir: File): File {
         val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
         val assetName = "aapt2-$abi"
         val target = File(toolsDir, "aapt2")
-        extractIfChanged(context, "$ASSETS_PREFIX/$assetName", target)
+        extractAsset(context, "$ASSETS_PREFIX/$assetName", target)
         try {
             Os.chmod(target.absolutePath, 0b111_101_101) // rwxr-xr-x
         } catch (_: Exception) {
@@ -77,14 +71,35 @@ object OnDeviceBuildEnvironment {
     }
 
     /**
-     * Copies an asset file to [target] only if the sizes differ (i.e. app updated).
+     * Extracts an asset file to [target].
+     *
+     * Strategy:
+     *  1. If the asset is UNCOMPRESSED in the APK (noCompress flag set), openFd() works and
+     *     we can compare sizes cheaply to skip re-extraction.
+     *  2. If the asset is compressed (openFd() throws), we fall back to streaming via open()
+     *     and only skip if the target file already has content (first-run guard).
      */
-    private fun extractIfChanged(context: Context, assetPath: String, target: File) {
-        val assetLength = try { context.assets.openFd(assetPath).length } catch (_: Exception) { return }
-        if (target.exists() && target.length() == assetLength) return
+    private fun extractAsset(context: Context, assetPath: String, target: File) {
+        // Try fast-path: uncompressed asset - compare sizes
+        try {
+            val fd = context.assets.openFd(assetPath)
+            val assetLength = fd.length
+            fd.close()
+            if (target.exists() && target.length() == assetLength) return
+        } catch (_: Exception) {
+            // Asset is compressed in APK; openFd() not available.
+            // Only skip if target already exists and is non-empty (assumed up-to-date).
+            if (target.exists() && target.length() > 0) return
+        }
+
+        // Extract via streaming (works for both compressed and uncompressed assets)
         target.parentFile?.mkdirs()
-        context.assets.open(assetPath).use { input ->
-            target.outputStream().use { output -> input.copyTo(output) }
+        try {
+            context.assets.open(assetPath).use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            }
+        } catch (e: Exception) {
+            throw RuntimeException("Failed to extract asset '$assetPath': ${e.message}", e)
         }
     }
 

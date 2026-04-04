@@ -89,6 +89,12 @@ android {
         }
     }
 
+    // Prevent AGP from compressing the aapt2 native binaries in the assets folder.
+    // Compressed assets cannot be opened with openFd() (required for efficient extraction).
+    androidResources {
+        noCompress += listOf("", "jar", "zip")
+    }
+
 }
 
 dependencies {
