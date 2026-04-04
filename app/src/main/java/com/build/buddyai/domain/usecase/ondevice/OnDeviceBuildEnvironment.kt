@@ -75,21 +75,33 @@ object OnDeviceBuildEnvironment {
      * Resolves the aapt2 binary from the app's native library directory.
      * The package manager installs libaapt2.so there with execute permission and
      * the correct SELinux label, so no chmod is needed.
+     *
+     * We search the exact nativeLibraryDir first, then fall back to sibling ABI
+     * directories under the same parent (handles devices that resolve a different
+     * ABI than the one we expect).
      */
     private fun resolveAapt2(context: Context): File {
-        val nativeLibDir = context.applicationInfo.nativeLibraryDir
-        val aapt2 = File(nativeLibDir, "libaapt2.so")
-        if (!aapt2.exists()) {
-            throw RuntimeException(
-                "libaapt2.so not found in nativeLibraryDir ($nativeLibDir). " +
-                "Ensure the app was installed from a valid APK (not run directly from IDE)."
-            )
+        val nativeLibDir = File(context.applicationInfo.nativeLibraryDir)
+
+        // Primary: exact nativeLibraryDir (e.g. .../lib/arm64 or .../lib/arm)
+        val primary = File(nativeLibDir, "libaapt2.so")
+        if (primary.exists()) return primary
+
+        // Fallback: search sibling ABI directories (lib/arm64, lib/arm, lib/x86, lib/x86_64)
+        val libbDir = nativeLibDir.parentFile
+        if (libbDir != null && libbDir.exists()) {
+            for (abiDir in libbDir.listFiles() ?: emptyArray()) {
+                val candidate = File(abiDir, "libaapt2.so")
+                if (candidate.exists()) {
+                    return candidate
+                }
+            }
         }
-        if (!aapt2.canExecute()) {
-            // This should not happen when installed via package manager, but try anyway
-            aapt2.setExecutable(true, false)
-        }
-        return aapt2
+
+        throw RuntimeException(
+            "libaapt2.so not found. nativeLibraryDir=${context.applicationInfo.nativeLibraryDir}. " +
+            "Make sure the latest APK (with jniLibs) is installed."
+        )
     }
 
     /**
