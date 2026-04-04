@@ -3,7 +3,7 @@ package com.build.buddyai.core.data.local
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
-import androidx.room.sqlite.SQLiteStatement
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.build.buddyai.core.data.local.dao.*
 import com.build.buddyai.core.data.local.entity.*
 
@@ -28,8 +28,8 @@ abstract class BuildBuddyDatabase : RoomDatabase() {
 }
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
-    override fun migrate(statement: SQLiteStatement) {
-        statement.executeUpdateDelete("ALTER TABLE provider_configs ADD COLUMN cached_models TEXT NOT NULL DEFAULT ''")
-        statement.executeUpdateDelete("ALTER TABLE provider_configs ADD COLUMN last_model_fetch_time INTEGER")
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE provider_configs ADD COLUMN cached_models TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE provider_configs ADD COLUMN last_model_fetch_time INTEGER")
     }
 }

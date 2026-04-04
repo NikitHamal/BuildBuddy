@@ -4,7 +4,6 @@ import com.build.buddyai.core.common.SecureKeyStore
 import com.build.buddyai.core.data.local.dao.ProviderConfigDao
 import com.build.buddyai.core.data.local.entity.ProviderConfigEntity
 import com.build.buddyai.core.model.*
-import com.build.buddyai.core.network.ModelCatalog
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
@@ -55,7 +54,8 @@ class ProviderRepository @Inject constructor(
     }
 
     suspend fun getDefaultProvider(): AiProvider? {
-        val config = providerConfigDao.getDefaultProvider()?.toProviderConfig() ?: return null
+        val entity = providerConfigDao.getDefaultProvider() ?: return null
+        val config = entity.toProviderConfig()
         val apiKey = secureKeyStore.getApiKey(config.providerId) ?: return null
         return AiProvider(
             id = config.providerId,
@@ -64,8 +64,10 @@ class ProviderRepository @Inject constructor(
             isConfigured = true,
             isDefault = true,
             selectedModelId = config.selectedModelId,
-            models = ModelCatalog.getModelsForProvider(config.type),
-            parameters = config.parameters
+            models = entity.cachedModels.let { parseCachedModels(it) },
+            parameters = config.parameters,
+            cachedModels = entity.cachedModels.let { parseCachedModels(it) },
+            lastModelFetchTime = entity.lastModelFetchTime
         )
     }
 

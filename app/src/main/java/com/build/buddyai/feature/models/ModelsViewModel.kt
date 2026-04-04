@@ -86,8 +86,8 @@ class ModelsViewModel @Inject constructor(
             _uiState.update { state ->
                 when {
                     result.isSuccess -> {
-                        val models = result.getOrEmpty()
-                        providerRepository.updateProviderModels(type.name, models)
+                        val models = result.getOrNull() ?: emptyList()
+                        providerRepository.updateProviderModels(type, models)
                         state.copy(
                             fetchingModels = state.fetchingModels - type,
                             modelFetchErrors = state.modelFetchErrors - type
