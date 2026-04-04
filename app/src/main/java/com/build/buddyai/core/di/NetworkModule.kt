@@ -1,7 +1,5 @@
 package com.build.buddyai.core.di
 
-import com.build.buddyai.core.network.AiApiService
-import com.build.buddyai.core.network.AiStreamingService
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -39,17 +37,5 @@ object NetworkModule {
                 }
             )
             .build()
-    }
-
-    @Provides
-    @Singleton
-    fun provideAiApiService(client: OkHttpClient, json: Json): AiApiService {
-        return AiApiService(client, json)
-    }
-
-    @Provides
-    @Singleton
-    fun provideAiStreamingService(client: OkHttpClient, json: Json): AiStreamingService {
-        return AiStreamingService(client, json)
     }
 }

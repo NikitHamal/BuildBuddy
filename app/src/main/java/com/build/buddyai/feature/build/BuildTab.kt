@@ -1,17 +1,23 @@
 package com.build.buddyai.feature.build
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -33,6 +39,7 @@ fun BuildTab(
     viewModel: BuildViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
 
     LaunchedEffect(projectId) { viewModel.initialize(projectId) }
@@ -49,7 +56,10 @@ fun BuildTab(
         item {
             NvCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(NvSpacing.Md)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         val statusIcon = when (uiState.buildStatus) {
                             BuildStatus.SUCCESS -> Icons.Filled.CheckCircle
                             BuildStatus.FAILED -> Icons.Filled.Error
@@ -64,36 +74,44 @@ fun BuildTab(
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
                         Icon(statusIcon, contentDescription = null, tint = statusColor, modifier = Modifier.size(24.dp))
-                        Spacer(Modifier.width(NvSpacing.Xs))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(uiState.statusMessage.ifEmpty { stringResource(R.string.build_status_idle) }, style = MaterialTheme.typography.titleSmall)
-                        }
+                        Spacer(Modifier.width(NvSpacing.Sm))
+                        Text(
+                            text = uiState.statusMessage.ifEmpty { stringResource(R.string.build_status_idle) },
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
 
                     if (uiState.isBuilding) {
-                        Spacer(Modifier.height(NvSpacing.Xs))
+                        Spacer(Modifier.height(NvSpacing.Sm))
                         NvLinearProgress(progress = uiState.buildProgress)
                     }
 
-                    Spacer(Modifier.height(NvSpacing.Sm))
+                    Spacer(Modifier.height(NvSpacing.Md))
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(NvSpacing.Xs)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(NvSpacing.Sm)
+                    ) {
                         if (uiState.isBuilding) {
                             NvOutlinedButton(
                                 text = stringResource(R.string.build_cancel),
                                 onClick = { viewModel.cancelBuild() },
-                                icon = Icons.Filled.Stop
+                                icon = Icons.Filled.Stop,
+                                modifier = Modifier.weight(1f)
                             )
                         } else {
                             NvFilledButton(
                                 text = stringResource(R.string.build_start),
                                 onClick = { viewModel.startBuild() },
-                                icon = Icons.Filled.PlayArrow
+                                icon = Icons.Filled.PlayArrow,
+                                modifier = Modifier.weight(1f)
                             )
                             NvOutlinedButton(
                                 text = stringResource(R.string.build_clean),
                                 onClick = { viewModel.cleanBuild() },
-                                icon = Icons.Filled.CleaningServices
+                                icon = Icons.Filled.CleaningServices,
+                                modifier = Modifier.weight(1f)
                             )
                         }
                     }
@@ -111,17 +129,20 @@ fun BuildTab(
                             Spacer(Modifier.width(NvSpacing.Xs))
                             Text(stringResource(R.string.build_error_summary), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
                         }
-                        Spacer(Modifier.height(NvSpacing.Xs))
-                        Text(
-                            uiState.errorSummary!!,
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                            color = MaterialTheme.colorScheme.error
-                        )
                         Spacer(Modifier.height(NvSpacing.Sm))
+                        SelectionContainer {
+                            Text(
+                                uiState.errorSummary!!,
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        Spacer(Modifier.height(NvSpacing.Md))
                         NvFilledButton(
                             text = stringResource(R.string.build_ask_ai_fix),
                             onClick = {},
-                            icon = Icons.Filled.Psychology
+                            icon = Icons.Filled.Psychology,
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
                 }
@@ -150,7 +171,28 @@ fun BuildTab(
         // Build logs
         if (uiState.logEntries.isNotEmpty()) {
             item {
-                Text(stringResource(R.string.build_view_logs), style = MaterialTheme.typography.titleSmall)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(stringResource(R.string.build_view_logs), style = MaterialTheme.typography.titleSmall)
+                    TextButton(
+                        onClick = {
+                            val logText = uiState.logEntries.joinToString("\n") { entry ->
+                                "[${dateFormat.format(Date(entry.timestamp))}] ${entry.level.name.first()} ${entry.message}"
+                            }
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Build Logs", logText))
+                            Toast.makeText(context, context.getString(R.string.common_copied), Toast.LENGTH_SHORT).show()
+                        },
+                        contentPadding = PaddingValues(NvSpacing.Xs)
+                    ) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(NvSpacing.Xs))
+                        Text(stringResource(R.string.action_copy), style = MaterialTheme.typography.labelMedium)
+                    }
+                }
             }
             item {
                 Surface(
@@ -158,28 +200,31 @@ fun BuildTab(
                     color = BuildBuddyThemeExtended.colors.editorBackground,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .padding(NvSpacing.Xs)
-                            .horizontalScroll(rememberScrollState())
-                    ) {
-                        uiState.logEntries.forEach { entry ->
-                            val color = when (entry.level) {
-                                LogLevel.ERROR -> MaterialTheme.colorScheme.error
-                                LogLevel.WARNING -> BuildBuddyThemeExtended.colors.warning
-                                LogLevel.INFO -> MaterialTheme.colorScheme.onSurface
-                                LogLevel.DEBUG -> MaterialTheme.colorScheme.onSurfaceVariant
-                                LogLevel.VERBOSE -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    SelectionContainer {
+                        Column(
+                            modifier = Modifier
+                                .padding(NvSpacing.Sm)
+                                .horizontalScroll(rememberScrollState())
+                        ) {
+                            uiState.logEntries.forEach { entry ->
+                                val color = when (entry.level) {
+                                    LogLevel.ERROR -> MaterialTheme.colorScheme.error
+                                    LogLevel.WARNING -> BuildBuddyThemeExtended.colors.warning
+                                    LogLevel.INFO -> MaterialTheme.colorScheme.onSurface
+                                    LogLevel.DEBUG -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    LogLevel.VERBOSE -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                }
+                                Text(
+                                    text = "[${dateFormat.format(Date(entry.timestamp))}] ${entry.level.name.first()} ${entry.message}",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        lineHeight = 16.sp
+                                    ),
+                                    color = color,
+                                    softWrap = false
+                                )
                             }
-                            Text(
-                                text = "[${dateFormat.format(Date(entry.timestamp))}] ${entry.level.name.first()} ${entry.message}",
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp,
-                                    lineHeight = 16.sp
-                                ),
-                                color = color
-                            )
                         }
                     }
                 }
@@ -189,9 +234,9 @@ fun BuildTab(
         // Build history
         if (uiState.buildHistory.isNotEmpty()) {
             item {
-                Text(stringResource(R.string.build_history), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = NvSpacing.Xs))
+                Text(stringResource(R.string.build_history), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = NvSpacing.Sm))
             }
-            items(uiState.buildHistory.take(10)) { record ->
+            items(uiState.buildHistory.take(10), key = { it.id }) { record ->
                 val historyDateFormat = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
                 NvCard(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -208,9 +253,9 @@ fun BuildTab(
                             shape = MaterialTheme.shapes.extraLarge,
                             color = statusColor
                         ) {}
-                        Spacer(Modifier.width(NvSpacing.Xs))
+                        Spacer(Modifier.width(NvSpacing.Sm))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(record.status.displayName, style = MaterialTheme.typography.labelMedium, color = statusColor)
+                            Text(record.status.displayName, style = MaterialTheme.typography.labelLarge, color = statusColor)
                             Text(historyDateFormat.format(Date(record.startedAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         if (record.durationMs != null) {

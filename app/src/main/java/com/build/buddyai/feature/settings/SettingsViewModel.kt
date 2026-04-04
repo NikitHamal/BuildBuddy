@@ -36,17 +36,20 @@ class SettingsViewModel @Inject constructor(
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
-    private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    private val notificationManager by lazy {
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    }
 
     init {
-        createNotificationChannel()
         viewModelScope.launch {
-            settingsDataStore.settings.collect { settings ->
-                _uiState.update { it.copy(settings = settings) }
+            launch {
+                settingsDataStore.settings.collect { settings ->
+                    _uiState.update { it.copy(settings = settings) }
+                }
             }
-        }
-        viewModelScope.launch {
-            updateStorageInfo()
+            launch {
+                updateStorageInfo()
+            }
         }
     }
 

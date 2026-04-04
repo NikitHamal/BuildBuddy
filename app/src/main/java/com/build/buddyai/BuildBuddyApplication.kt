@@ -15,7 +15,10 @@ class BuildBuddyApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
-        CrashHandler.init(this)
+        // Delay crash handler initialization to avoid interfering with Hilt
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            CrashHandler.init(this)
+        }
         Timber.plant(Timber.DebugTree())
     }
 

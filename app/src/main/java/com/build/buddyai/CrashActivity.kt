@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -170,39 +171,6 @@ private fun CrashScreen(crashReport: CrashReport?) {
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        // Top bar
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            tonalElevation = NvElevation.Sm
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(NvSpacing.Md),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Filled.BugReport,
-                    contentDescription = null,
-                    modifier = Modifier.size(32.dp),
-                    tint = MaterialTheme.colorScheme.error
-                )
-                Spacer(Modifier.width(NvSpacing.Md))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "App Crashed",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                    Text(
-                        "An unexpected error occurred",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -212,24 +180,26 @@ private fun CrashScreen(crashReport: CrashReport?) {
         ) {
             // Error summary
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(NvSpacing.Md)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                            Spacer(Modifier.width(NvSpacing.Xs))
-                            Text("Error", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
-                        }
-                        Spacer(Modifier.height(NvSpacing.Xs))
-                        Text(
-                            "${crashReport?.exception ?: "Unknown"}: ${crashReport?.message ?: "No details"}",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                            color = MaterialTheme.colorScheme.onErrorContainer
+                SelectionContainer {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
                         )
+                    ) {
+                        Column(modifier = Modifier.padding(NvSpacing.Md)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                Spacer(Modifier.width(NvSpacing.Xs))
+                                Text("Error", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
+                            }
+                            Spacer(Modifier.height(NvSpacing.Xs))
+                            Text(
+                                "${crashReport?.exception ?: "Unknown"}: ${crashReport?.message ?: "No details"}",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
                     }
                 }
             }
@@ -262,31 +232,33 @@ private fun CrashScreen(crashReport: CrashReport?) {
 
             if (showDetails && crashReport != null) {
                 item {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = NvShapes.small,
-                        color = MaterialTheme.colorScheme.surfaceContainerHighest
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .padding(NvSpacing.Md)
-                                .horizontalScroll(rememberScrollState())
+                    SelectionContainer {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = NvShapes.small,
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest
                         ) {
-                            crashReport.stackTrace.split("\n").forEach { line ->
-                                if (line.isNotBlank()) {
-                                    Text(
-                                        text = line,
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 11.sp,
-                                            lineHeight = 16.sp
-                                        ),
-                                        color = when {
-                                            line.contains("Caused by:") || line.contains("Exception") -> MaterialTheme.colorScheme.error
-                                            line.contains("at com.build.buddyai") -> MaterialTheme.colorScheme.primary
-                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                        }
-                                    )
+                            Column(
+                                modifier = Modifier
+                                    .padding(NvSpacing.Md)
+                                    .horizontalScroll(rememberScrollState())
+                            ) {
+                                crashReport.stackTrace.split("\n").forEach { line ->
+                                    if (line.isNotBlank()) {
+                                        Text(
+                                            text = line,
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 11.sp,
+                                                lineHeight = 16.sp
+                                            ),
+                                            color = when {
+                                                line.contains("Caused by:") || line.contains("Exception") -> MaterialTheme.colorScheme.error
+                                                line.contains("at com.build.buddyai") -> MaterialTheme.colorScheme.primary
+                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -304,20 +276,18 @@ private fun CrashScreen(crashReport: CrashReport?) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(NvSpacing.Md),
-                horizontalArrangement = Arrangement.spacedBy(NvSpacing.Xs)
+                horizontalArrangement = Arrangement.spacedBy(NvSpacing.Md)
             ) {
                 // Copy button
                 OutlinedButton(
                     onClick = {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("Crash Report", fullReport))
-                        Toast.makeText(context, "Crash report copied to clipboard", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(NvSpacing.Xs))
-                    Text("Copy Report")
+                    Text("Copy")
                 }
 
                 // Restart button
@@ -331,14 +301,13 @@ private fun CrashScreen(crashReport: CrashReport?) {
                     },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(NvSpacing.Xs))
-                    Text("Restart App")
+                    Text("Restart")
                 }
             }
         }
     }
 }
+
 
 @Composable
 private fun InfoCard(title: String, value: String) {
