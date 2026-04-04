@@ -15,6 +15,7 @@ class BuildBuddyApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        CrashHandler.init(this)
         Timber.plant(Timber.DebugTree())
     }
 

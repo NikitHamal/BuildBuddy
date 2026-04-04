@@ -36,6 +36,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".CrashActivity"
+            android:exported="false"
+            android:process=":crash" />
+
         <service
             android:name=".core.common.BuildForegroundService"
             android:foregroundServiceType="specialUse"
