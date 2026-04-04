@@ -32,7 +32,7 @@ class GenerateProjectFilesUseCase @Inject constructor(
         val pkgPath = project.packageName.replace(".", "/")
 
         generateGradleFiles(dir, project)
-        generateManifest(dir, project, ".MainActivity")
+        generateManifest(dir, project, ".MainActivity", isCompose = true)
 
         // Main Activity
         val srcDir = File(dir, "app/src/main/java/$pkgPath")
@@ -128,7 +128,6 @@ fun AppTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.primary.toArgb()
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
         }
     }
@@ -136,7 +135,7 @@ fun AppTheme(
 }
 """.trimIndent())
 
-        // Strings
+        // Strings and theme for Compose projects
         val resDir = File(dir, "app/src/main/res/values")
         resDir.mkdirs()
         File(resDir, "strings.xml").writeText("""
@@ -145,23 +144,29 @@ fun AppTheme(
     <string name="app_name">${project.name}</string>
 </resources>
 """.trimIndent())
+        // Generate a minimal themes.xml for on-device build compatibility
+        File(resDir, "themes.xml").writeText("""
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.App" parent="android:Theme.Material.Light.NoActionBar"/>
+</resources>
+""".trimIndent())
     }
 
     private fun generateViewsProject(dir: File, project: Project) {
         val pkgPath = project.packageName.replace(".", "/")
         generateGradleFiles(dir, project)
-        generateManifest(dir, project, ".MainActivity")
+        generateManifest(dir, project, ".MainActivity", isCompose = false)
 
         val srcDir = File(dir, "app/src/main/java/$pkgPath")
         srcDir.mkdirs()
         File(srcDir, "MainActivity.kt").writeText("""
 package ${project.packageName}
 
+import android.app.Activity
 import android.os.Bundle
-import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -200,6 +205,19 @@ class MainActivity : AppCompatActivity() {
     <string name="app_name">${project.name}</string>
 </resources>
 """.trimIndent())
+        // Generate themes.xml with PLATFORM theme for on-device build compatibility
+        // MaterialComponents theme won't work during AAPT2 linking since it's not in android.jar
+        // We use platform theme here and apply MaterialComponents styling programmatically if needed
+        File(resDir, "themes.xml").writeText("""
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.App" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@android:color/holo_blue_dark</item>
+        <item name="android:colorPrimaryDark">@android:color/holo_blue_dark</item>
+        <item name="android:colorAccent">@android:color/holo_blue_light</item>
+    </style>
+</resources>
+""".trimIndent())
     }
 
     private fun generateSingleActivityCompose(dir: File, project: Project) {
@@ -209,17 +227,17 @@ class MainActivity : AppCompatActivity() {
     private fun generateJavaProject(dir: File, project: Project) {
         val pkgPath = project.packageName.replace(".", "/")
         generateGradleFiles(dir, project)
-        generateManifest(dir, project, ".MainActivity")
+        generateManifest(dir, project, ".MainActivity", isCompose = false)
 
         val srcDir = File(dir, "app/src/main/java/$pkgPath")
         srcDir.mkdirs()
         File(srcDir, "MainActivity.java").writeText("""
 package ${project.packageName};
 
+import android.app.Activity;
 import android.os.Bundle;
-import androidx.appcompat.app.AppCompatActivity;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -257,6 +275,17 @@ public class MainActivity extends AppCompatActivity {
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">${project.name}</string>
+</resources>
+""".trimIndent())
+        // Generate themes.xml with PLATFORM theme for on-device build compatibility
+        File(resDir, "themes.xml").writeText("""
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.App" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@android:color/holo_blue_dark</item>
+        <item name="android:colorPrimaryDark">@android:color/holo_blue_dark</item>
+        <item name="android:colorAccent">@android:color/holo_blue_light</item>
+    </style>
 </resources>
 """.trimIndent())
     }
@@ -370,9 +399,13 @@ android.nonTransitiveRClass=true
         }
     }
 
-    private fun generateManifest(dir: File, project: Project, activityName: String) {
+    private fun generateManifest(dir: File, project: Project, activityName: String, isCompose: Boolean = false) {
         val manifestDir = File(dir, "app/src/main")
         manifestDir.mkdirs()
+        // For on-device builds, we must use platform themes that exist in android.jar
+        // Compose projects don't need manifest-level theming (Compose handles it)
+        // Views projects need a valid platform theme
+        val themeRef = "@style/Theme.App"
         File(manifestDir, "AndroidManifest.xml").writeText("""
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -383,7 +416,7 @@ android.nonTransitiveRClass=true
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:usesCleartextTraffic="false"
-        android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+        android:theme="$themeRef">
 
         <activity
             android:name="$activityName"
