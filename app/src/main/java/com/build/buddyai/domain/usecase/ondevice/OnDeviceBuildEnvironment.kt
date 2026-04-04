@@ -15,6 +15,8 @@ import java.util.zip.ZipInputStream
 object OnDeviceBuildEnvironment {
 
     private const val ASSETS_PREFIX = "build_tools"
+
+    @Volatile
     private var initialized = false
 
     lateinit var aapt2Binary: File
@@ -28,78 +30,121 @@ object OnDeviceBuildEnvironment {
 
     fun initialize(context: Context) {
         if (initialized) return
-        val toolsDir = File(context.filesDir, "build_tools").also { it.mkdirs() }
+        synchronized(this) {
+            if (initialized) return
 
-        aapt2Binary = extractAapt2(context, toolsDir)
+            val toolsDir = File(context.filesDir, "build_tools").also { it.mkdirs() }
 
-        androidJar = File(toolsDir, "android.jar")
-        val androidJarZip = File(toolsDir, "android.jar.zip")
-        extractAsset(context, "$ASSETS_PREFIX/android.jar.zip", androidJarZip)
-        if (!androidJar.exists() || androidJar.length() == 0L) {
-            unzip(androidJarZip, toolsDir)
+            aapt2Binary = extractAapt2(context, toolsDir)
+
+            val androidJarZip = File(toolsDir, "android.jar.zip")
+            androidJar = File(toolsDir, "android.jar")
+            extractAsset(context, "$ASSETS_PREFIX/android.jar.zip", androidJarZip)
+            if (!androidJar.exists() || androidJar.length() == 0L) {
+                unzip(androidJarZip, toolsDir)
+            }
+
+            coreLambdaStubsJar = File(toolsDir, "core-lambda-stubs.jar")
+            extractAsset(context, "$ASSETS_PREFIX/core-lambda-stubs.jar", coreLambdaStubsJar)
+
+            val testkeyZip = File(toolsDir, "testkey.zip")
+            testkeyDir = File(toolsDir, "testkey")
+            extractAsset(context, "$ASSETS_PREFIX/testkey.zip", testkeyZip)
+            if (!testkeyDir.exists() || testkeyDir.list().isNullOrEmpty()) {
+                testkeyDir.mkdirs()
+                unzip(testkeyZip, testkeyDir)
+            }
+
+            initialized = true
         }
-
-        coreLambdaStubsJar = File(toolsDir, "core-lambda-stubs.jar")
-        extractAsset(context, "$ASSETS_PREFIX/core-lambda-stubs.jar", coreLambdaStubsJar)
-
-        val testkeyZip = File(toolsDir, "testkey.zip")
-        testkeyDir = File(toolsDir, "testkey")
-        extractAsset(context, "$ASSETS_PREFIX/testkey.zip", testkeyZip)
-        if (!testkeyDir.exists() || testkeyDir.list().isNullOrEmpty()) {
-            testkeyDir.mkdirs()
-            unzip(testkeyZip, testkeyDir)
-        }
-
-        initialized = true
     }
 
     fun reset() {
         initialized = false
     }
 
+    // ─── Private helpers ──────────────────────────────────────────────────────
+
     private fun extractAapt2(context: Context, toolsDir: File): File {
-        val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
-        val assetName = "aapt2-$abi"
+        val abi = selectAbi()
         val target = File(toolsDir, "aapt2")
-        extractAsset(context, "$ASSETS_PREFIX/$assetName", target)
-        try {
-            Os.chmod(target.absolutePath, 0b111_101_101) // rwxr-xr-x
-        } catch (_: Exception) {
-            target.setExecutable(true, false)
+
+        // Always re-extract + re-chmod on every cold start so permissions are fresh.
+        // extractAsset skips if file is already identical in size.
+        extractAsset(context, "$ASSETS_PREFIX/aapt2-$abi", target)
+        makeExecutable(target)
+
+        // Verify executable - throw early with a clear message if all methods fail
+        if (!target.canExecute()) {
+            throw RuntimeException(
+                "aapt2 binary at ${target.absolutePath} is not executable after chmod. " +
+                "Device ABI: $abi, File size: ${target.length()}"
+            )
         }
+
         return target
+    }
+
+    private fun selectAbi(): String {
+        val supported = Build.SUPPORTED_ABIS.toList()
+        // Pick the best ABI we have a binary for
+        for (candidate in listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")) {
+            if (supported.any { it == candidate }) return candidate
+        }
+        return supported.firstOrNull() ?: "arm64-v8a"
+    }
+
+    /**
+     * Makes a file executable using three escalating strategies:
+     *  1. android.system.Os.chmod (kernel-level, most reliable)
+     *  2. java.io.File.setExecutable (JVM wrapper)
+     *  3. Shell `chmod 755` via ProcessBuilder
+     */
+    private fun makeExecutable(file: File) {
+        // Strategy 1: Os.chmod with rwxr-xr-x (493 decimal = 0755 octal)
+        try {
+            Os.chmod(file.absolutePath, 493)
+        } catch (_: Exception) { }
+
+        if (file.canExecute()) return
+
+        // Strategy 2: Java File API (belt-and-suspenders)
+        file.setExecutable(true, false)
+
+        if (file.canExecute()) return
+
+        // Strategy 3: Shell chmod as last resort
+        try {
+            ProcessBuilder("chmod", "755", file.absolutePath)
+                .redirectErrorStream(true)
+                .start()
+                .waitFor()
+        } catch (_: Exception) { }
     }
 
     /**
      * Extracts an asset file to [target].
      *
-     * Strategy:
-     *  1. If the asset is UNCOMPRESSED in the APK (noCompress flag set), openFd() works and
-     *     we can compare sizes cheaply to skip re-extraction.
-     *  2. If the asset is compressed (openFd() throws), we fall back to streaming via open()
-     *     and only skip if the target file already has content (first-run guard).
+     * - If the asset is uncompressed in the APK (noCompress flag): uses openFd() size comparison
+     *   to skip re-extraction when already up-to-date.
+     * - If the asset is compressed: falls back to streaming via open(), skipping only if
+     *   the target already has content (assumes it's up-to-date across reinstalls).
      */
     private fun extractAsset(context: Context, assetPath: String, target: File) {
-        // Try fast-path: uncompressed asset - compare sizes
         try {
+            // Fast path: uncompressed asset in APK - compare sizes
             val fd = context.assets.openFd(assetPath)
             val assetLength = fd.length
             fd.close()
             if (target.exists() && target.length() == assetLength) return
         } catch (_: Exception) {
-            // Asset is compressed in APK; openFd() not available.
-            // Only skip if target already exists and is non-empty (assumed up-to-date).
+            // Compressed asset: can't use openFd(). Skip only if target has content.
             if (target.exists() && target.length() > 0) return
         }
 
-        // Extract via streaming (works for both compressed and uncompressed assets)
         target.parentFile?.mkdirs()
-        try {
-            context.assets.open(assetPath).use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
-            }
-        } catch (e: Exception) {
-            throw RuntimeException("Failed to extract asset '$assetPath': ${e.message}", e)
+        context.assets.open(assetPath).use { input ->
+            target.outputStream().use { output -> input.copyTo(output) }
         }
     }
 
