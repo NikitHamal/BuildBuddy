@@ -155,7 +155,8 @@ private fun ProviderCard(
                                 contentDescription = null
                             )
                         }
-                    }
+                    },
+                    modifier = Modifier.imePadding()
                 )
 
                 Spacer(Modifier.height(NvSpacing.Xs))

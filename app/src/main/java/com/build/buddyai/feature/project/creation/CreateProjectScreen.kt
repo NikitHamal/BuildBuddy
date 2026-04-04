@@ -80,7 +80,9 @@ fun CreateProjectScreen(
             // Bottom navigation
             Surface(
                 tonalElevation = NvElevation.Sm,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .imePadding()
             ) {
                 Row(
                     modifier = Modifier.padding(NvSpacing.Md),

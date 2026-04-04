@@ -413,7 +413,8 @@ private fun CreateNameDialog(
                 value = name,
                 onValueChange = { name = it },
                 placeholder = "Name",
-                singleLine = true
+                singleLine = true,
+                modifier = Modifier.imePadding()
             )
         },
         confirmButton = {

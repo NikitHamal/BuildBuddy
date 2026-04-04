@@ -155,7 +155,8 @@ private fun HomeContent(
                 onValueChange = onSearchQueryChange,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = NvSpacing.Md, vertical = NvSpacing.Xs),
+                    .padding(horizontal = NvSpacing.Md, vertical = NvSpacing.Xs)
+                    .imePadding(),
                 placeholder = { Text(stringResource(R.string.home_search_hint)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = if (uiState.searchQuery.isNotEmpty()) {

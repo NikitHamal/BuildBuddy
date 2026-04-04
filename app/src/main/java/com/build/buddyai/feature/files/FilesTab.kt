@@ -211,7 +211,8 @@ private fun CreateFileDialog(
                 value = name,
                 onValueChange = { name = it },
                 placeholder = placeholder,
-                singleLine = true
+                singleLine = true,
+                modifier = Modifier.imePadding()
             )
         },
         confirmButton = {

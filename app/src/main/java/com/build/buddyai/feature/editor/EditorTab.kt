@@ -107,7 +107,8 @@ fun EditorTab(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .padding(NvSpacing.Xs),
+                    .padding(NvSpacing.Xs)
+                    .imePadding(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(

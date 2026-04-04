@@ -125,7 +125,9 @@ fun AgentScreen(
             if (uiState.hasProvider) {
                 Surface(
                     tonalElevation = NvElevation.Sm,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .imePadding()
                 ) {
                     Column(modifier = Modifier.padding(NvSpacing.Sm)) {
                         if (uiState.attachedFiles.isNotEmpty()) {
