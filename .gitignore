@@ -1,0 +1,23 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.hprof
+*.log
+
+# Built APKs
+*.apk
+*.ap_
+*.aab
+
+# Generated
+/app/build/
+/core/*/build/
+/feature/*/build/
+/buildSrc/build/

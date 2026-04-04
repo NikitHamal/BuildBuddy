@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <files-path
+        name="projects"
+        path="projects/" />
+    <files-path
+        name="builds"
+        path="builds/" />
+    <cache-path
+        name="cache"
+        path="." />
+    <external-files-path
+        name="external"
+        path="." />
+</paths>
