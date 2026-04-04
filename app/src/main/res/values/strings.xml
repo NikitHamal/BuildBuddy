@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BuildBuddy</string>
+    <string name="splash_tagline">Spiritual clarity. Engineering precision.</string>
+    <string name="onboarding_title_1">Create Android Projects On Device</string>
+    <string name="onboarding_desc_1">Scaffold Kotlin or Java templates and manage project structure locally.</string>
+    <string name="onboarding_title_2">Vibe Code With Agentic AI</string>
+    <string name="onboarding_desc_2">Plan, generate, refactor, and patch code with reviewable diffs and safe apply controls.</string>
+    <string name="onboarding_title_3">Build, Install, Iterate</string>
+    <string name="onboarding_desc_3">Run supported on-device builds, inspect diagnostics, and install APK artifacts.</string>
+    <string name="continue_label">Continue</string>
+    <string name="skip_label">Skip</string>
+    <string name="get_started">Get Started</string>
+
+    <string name="home_title">Projects</string>
+    <string name="search_projects">Search projects</string>
+    <string name="new_project">New Project</string>
+    <string name="import_project">Import Project</string>
+    <string name="empty_projects_title">Start your first build workspace</string>
+    <string name="empty_projects_desc">Create a BuildBuddy template or import a compatible ZIP project.</string>
+    <string name="recent_projects">Recent Projects</string>
+    <string name="recent_builds">Recent Builds</string>
+    <string name="quick_actions">Quick Actions</string>
+    <string name="sort_label">Sort</string>
+    <string name="filter_label">Filter</string>
+    <string name="sort_updated_desc">Recently Updated</string>
+    <string name="sort_name_asc">Name A-Z</string>
+    <string name="sort_created_desc">Recently Created</string>
+
+    <string name="create_project_title">Create Project</string>
+    <string name="project_name">App Name</string>
+    <string name="package_name">Package Name</string>
+    <string name="language">Language</string>
+    <string name="ui_stack">UI Stack</string>
+    <string name="min_sdk">Min SDK</string>
+    <string name="target_sdk">Target SDK</string>
+    <string name="theme_template">Template</string>
+    <string name="project_description">Project Intent</string>
+    <string name="project_icon">Project Icon</string>
+    <string name="validate_and_create">Create Project</string>
+    <string name="project_summary">Project Summary</string>
+
+    <string name="tab_overview">Overview</string>
+    <string name="tab_agent">Agent</string>
+    <string name="tab_editor">Editor</string>
+    <string name="tab_files">Files</string>
+    <string name="tab_build">Build</string>
+    <string name="tab_artifacts">Artifacts</string>
+    <string name="tab_settings">Settings</string>
+
+    <string name="agent_mode_ask">Ask</string>
+    <string name="agent_mode_plan">Plan</string>
+    <string name="agent_mode_apply">Apply</string>
+    <string name="agent_mode_auto_apply">Auto Apply</string>
+    <string name="agent_hint">Describe what you want to build or fix</string>
+    <string name="attach_context">Attach Context</string>
+    <string name="send">Send</string>
+    <string name="stop">Stop</string>
+    <string name="retry">Retry</string>
+    <string name="apply_patch">Apply Patch</string>
+    <string name="reject_patch">Reject</string>
+
+    <string name="editor_no_file">Select a file to start coding.</string>
+    <string name="search_in_file">Search in file</string>
+    <string name="replace_in_file">Replace in file</string>
+    <string name="save">Save</string>
+    <string name="undo">Undo</string>
+    <string name="redo">Redo</string>
+
+    <string name="build_now">Build APK</string>
+    <string name="clean_build">Clean Build</string>
+    <string name="cancel_build">Cancel Build</string>
+    <string name="ask_ai_to_fix">Ask AI To Fix</string>
+    <string name="build_logs">Build Logs</string>
+    <string name="build_diagnostics">Diagnostics</string>
+    <string name="build_history">Build History</string>
+    <string name="supported_scope">Supported Build Scope</string>
+
+    <string name="artifact_install">Install</string>
+    <string name="artifact_share">Share</string>
+    <string name="artifact_delete">Delete</string>
+    <string name="artifact_open_app">Open App</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="appearance">Appearance</string>
+    <string name="editor_settings">Editor</string>
+    <string name="ai_settings">AI</string>
+    <string name="model_providers">Model Providers</string>
+    <string name="build_settings">Build</string>
+    <string name="notifications">Notifications</string>
+    <string name="privacy_security">Privacy &amp; Security</string>
+    <string name="about">About</string>
+
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="font_size">Font Size</string>
+    <string name="tab_width">Tab Width</string>
+    <string name="soft_wrap">Soft Wrap</string>
+    <string name="line_numbers">Line Numbers</string>
+    <string name="autosave">Autosave</string>
+
+    <string name="provider_nvidia">NVIDIA</string>
+    <string name="provider_openrouter">OpenRouter</string>
+    <string name="provider_gemini">Gemini</string>
+    <string name="api_key">API Key</string>
+    <string name="model">Model</string>
+    <string name="temperature">Temperature</string>
+    <string name="max_tokens">Max Tokens</string>
+    <string name="top_p">Top P</string>
+    <string name="test_connection">Test Connection</string>
+    <string name="save_provider">Save Provider</string>
+    <string name="remove_provider">Remove Provider</string>
+
+    <string name="status_ready">Ready</string>
+    <string name="status_running">Running</string>
+    <string name="status_success">Success</string>
+    <string name="status_failed">Failed</string>
+    <string name="status_cancelled">Cancelled</string>
+    <string name="status_unsupported">Unsupported</string>
+
+    <string name="invalid_project_name">Enter a valid app name.</string>
+    <string name="invalid_package_name">Package name must be lowercase dot-separated identifiers.</string>
+    <string name="invalid_sdk_range">Target SDK must be greater than or equal to min SDK.</string>
+
+    <string name="workspace_storage">Workspace</string>
+    <string name="export_logs">Export Logs</string>
+    <string name="licenses">Open Source Licenses</string>
+    <string name="app_version">Version</string>
+    <string name="ai_auto_snapshot">Auto Snapshot Before AI Apply</string>
+    <string name="install_auto_open">Open App After Install</string>
+    <string name="providers_manage">Manage Providers</string>
+    <string name="set_as_default">Set Default</string>
+
+    <string name="install_permission_message">Allow BuildBuddy to request package installs for APK installation.</string>
+    <string name="compatibility_header">Build compatibility</string>
+    <string name="unsupported_project">Project is not compatible with BuildBuddy on-device build pipeline.</string>
+    <string name="import_zip">Import ZIP</string>
+    <string name="export_zip">Export ZIP</string>
+    <string name="archive_project">Archive Project</string>
+    <string name="duplicate_project">Duplicate Project</string>
+    <string name="editor_search">Search</string>
+    <string name="editor_replace">Replace</string>
+    <string name="editor_apply_replace">Apply</string>
+    <string name="new_file_path">New File Path</string>
+    <string name="create">Create</string>
+    <string name="refresh">Refresh</string>
+    <string name="delete">Delete</string>
+    <string name="build_debug">Debug</string>
+    <string name="build_release">Release</string>
+    <string name="files_count">%1$d files</string>
+    <string name="builds_count">%1$d builds</string>
+    <string name="artifacts_count">%1$d artifacts</string>
+</resources>

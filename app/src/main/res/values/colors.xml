@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="neo_sand_50">#FFF7EC</color>
+    <color name="neo_sand_100">#F6E7D1</color>
+    <color name="neo_sand_200">#E9D4B4</color>
+    <color name="neo_clay_500">#8B6B4A</color>
+    <color name="neo_clay_700">#5F4730</color>
+    <color name="neo_ink_900">#151B1F</color>
+    <color name="neo_ink_700">#2B353C</color>
+    <color name="neo_teal_500">#2F7F78</color>
+    <color name="neo_teal_200">#A9D4D0</color>
+    <color name="neo_amber_500">#B78928</color>
+    <color name="neo_error">#BA1A1A</color>
+    <color name="neo_outline">#746E67</color>
+    <color name="neo_surface_light">#FFFBFF</color>
+    <color name="neo_surface_dark">#111417</color>
+</resources>

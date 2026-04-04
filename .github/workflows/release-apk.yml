@@ -1,0 +1,64 @@
+name: buildbuddy-release-apk
+
+on:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
+
+jobs:
+  release-apk:
+    runs-on: ubuntu-latest
+    env:
+      BUILD_BUDDY_KEYSTORE_PASSWORD: ${{ secrets.BUILD_BUDDY_KEYSTORE_PASSWORD }}
+      BUILD_BUDDY_KEY_ALIAS: ${{ secrets.BUILD_BUDDY_KEY_ALIAS }}
+      BUILD_BUDDY_KEY_PASSWORD: ${{ secrets.BUILD_BUDDY_KEY_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.10.2
+          cache-read-only: false
+
+      - name: Decode Keystore
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.BUILD_BUDDY_KEYSTORE_BASE64 }}" ]; then
+            echo "Missing BUILD_BUDDY_KEYSTORE_BASE64 secret."
+            exit 1
+          fi
+          echo "${{ secrets.BUILD_BUDDY_KEYSTORE_BASE64 }}" | base64 --decode > /tmp/buildbuddy-release.keystore
+          echo "BUILD_BUDDY_KEYSTORE_FILE=/tmp/buildbuddy-release.keystore" >> "$GITHUB_ENV"
+
+      - name: Build Release APK
+        run: gradle :app:assembleRelease --build-cache --parallel --configuration-cache
+
+      - name: Rename APK
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          INPUT_APK="app/build/outputs/apk/release/app-release.apk"
+          OUTPUT_APK="app/build/outputs/apk/release/BuildBuddy-${SHORT_SHA}-release.apk"
+          if [ ! -f "$INPUT_APK" ]; then
+            echo "Release APK not found at $INPUT_APK"
+            exit 1
+          fi
+          mv "$INPUT_APK" "$OUTPUT_APK"
+          echo "RENAMED_APK=$OUTPUT_APK" >> "$GITHUB_ENV"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: ${{ env.RENAMED_APK }}

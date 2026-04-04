@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <files-path name="build_artifacts" path="build_artifacts/" />
+    <files-path name="projects" path="projects/" />
+    <cache-path name="shared_cache" path="shared/" />
+</paths>
