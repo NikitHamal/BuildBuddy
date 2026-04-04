@@ -1,6 +1,7 @@
 package com.build.buddyai.feature.home
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -22,6 +23,7 @@ import com.build.buddyai.core.designsystem.component.*
 import com.build.buddyai.core.designsystem.theme.*
 import com.build.buddyai.core.model.BuildStatus
 import com.build.buddyai.core.model.Project
+import com.build.buddyai.core.model.ProjectLanguage
 import java.text.SimpleDateFormat
 import java.util.*
 

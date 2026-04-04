@@ -243,7 +243,7 @@ fun BuildWorkspaceScreen(
                                 }
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 clipboard.setPrimaryClip(ClipData.newPlainText("Build Logs", logText))
-                                Toast.makeText(context, "Logs copied", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, context.getString(R.string.common_copied), Toast.LENGTH_SHORT).show()
                             }
                         ) {
                             Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
