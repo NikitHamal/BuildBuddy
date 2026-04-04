@@ -15,18 +15,20 @@ fun NvFilledButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    icon: ImageVector? = null
+    icon: ImageVector? = null,
+    colors: ButtonColors = ButtonDefaults.buttonColors()
 ) {
     Button(
         onClick = onClick,
-        modifier = modifier.heightIn(min = 48.dp),
+        modifier = modifier.heightIn(min = 44.dp),
         enabled = enabled,
-        shape = NvShapes.small,
-        contentPadding = PaddingValues(horizontal = NvSpacing.Md, vertical = NvSpacing.Sm)
+        shape = NvShapes.medium,
+        contentPadding = PaddingValues(horizontal = NvSpacing.Md, vertical = NvSpacing.Sm),
+        colors = colors
     ) {
         if (icon != null) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(NvSpacing.Xs))
+            Spacer(Modifier.width(NvSpacing.Sm))
         }
         Text(text, style = MaterialTheme.typography.labelLarge)
     }
@@ -42,15 +44,15 @@ fun NvOutlinedButton(
 ) {
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier.heightIn(min = 48.dp),
+        modifier = modifier.heightIn(min = 44.dp),
         enabled = enabled,
-        shape = NvShapes.small,
-        border = BorderStroke(NvBorder.Thin, MaterialTheme.colorScheme.outline),
+        shape = NvShapes.medium,
+        border = BorderStroke(NvBorder.Hairline, MaterialTheme.colorScheme.outlineVariant),
         contentPadding = PaddingValues(horizontal = NvSpacing.Md, vertical = NvSpacing.Sm)
     ) {
         if (icon != null) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(NvSpacing.Xs))
+            Spacer(Modifier.width(NvSpacing.Sm))
         }
         Text(text, style = MaterialTheme.typography.labelLarge)
     }
@@ -66,9 +68,9 @@ fun NvTextButton(
 ) {
     TextButton(
         onClick = onClick,
-        modifier = modifier.heightIn(min = 48.dp),
+        modifier = modifier.heightIn(min = 40.dp),
         enabled = enabled,
-        shape = NvShapes.small,
+        shape = NvShapes.medium,
         contentPadding = PaddingValues(horizontal = NvSpacing.Sm, vertical = NvSpacing.Xs)
     ) {
         if (icon != null) {
@@ -89,14 +91,14 @@ fun NvTonalButton(
 ) {
     FilledTonalButton(
         onClick = onClick,
-        modifier = modifier.heightIn(min = 48.dp),
+        modifier = modifier.heightIn(min = 44.dp),
         enabled = enabled,
-        shape = NvShapes.small,
+        shape = NvShapes.medium,
         contentPadding = PaddingValues(horizontal = NvSpacing.Md, vertical = NvSpacing.Sm)
     ) {
         if (icon != null) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(NvSpacing.Xs))
+            Spacer(Modifier.width(NvSpacing.Sm))
         }
         Text(text, style = MaterialTheme.typography.labelLarge)
     }

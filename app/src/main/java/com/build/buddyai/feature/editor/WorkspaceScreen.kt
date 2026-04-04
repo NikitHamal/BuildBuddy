@@ -4,9 +4,7 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -14,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.*
@@ -51,9 +50,9 @@ fun WorkspaceScreen(
             exit = shrinkHorizontally() + fadeOut()
         ) {
             Surface(
-                modifier = Modifier.width(240.dp).fillMaxHeight(),
+                modifier = Modifier.width(260.dp).fillMaxHeight(),
                 color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                tonalElevation = NvElevation.Sm
+                border = BorderStroke(NvBorder.Hairline, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
             ) {
                 FileTreePanel(
                     uiState = uiState,
@@ -70,139 +69,167 @@ fun WorkspaceScreen(
 
         // Editor Area
         Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-            // Top toolbar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .padding(horizontal = NvSpacing.Xs, vertical = NvSpacing.Xxs),
-                verticalAlignment = Alignment.CenterVertically
+            // Toolbar
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(NvBorder.Hairline, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
             ) {
-                if (!showFileTree) {
-                    IconButton(onClick = { showFileTree = true }) {
-                        Icon(Icons.Filled.Folder, contentDescription = "Show File Tree", modifier = Modifier.size(18.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = NvSpacing.Xs, vertical = NvSpacing.Xxs),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (!showFileTree) {
+                        IconButton(onClick = { showFileTree = true }) {
+                            Icon(Icons.Filled.MenuOpen, contentDescription = "Show Files", modifier = Modifier.size(20.dp))
+                        }
                     }
-                }
-                IconButton(onClick = { viewModel.undo() }, enabled = uiState.undoStack.isNotEmpty()) {
-                    Icon(Icons.Filled.Undo, contentDescription = stringResource(R.string.editor_undo), modifier = Modifier.size(18.dp))
-                }
-                IconButton(onClick = { viewModel.redo() }, enabled = uiState.redoStack.isNotEmpty()) {
-                    Icon(Icons.Filled.Redo, contentDescription = stringResource(R.string.editor_redo), modifier = Modifier.size(18.dp))
-                }
-                Spacer(Modifier.weight(1f))
-                if (uiState.activeFile?.isModified == true) {
-                    NvStatusChip(
-                        label = stringResource(R.string.editor_modified),
-                        containerColor = BuildBuddyThemeExtended.colors.warningContainer,
-                        contentColor = BuildBuddyThemeExtended.colors.warning
-                    )
-                    Spacer(Modifier.width(NvSpacing.Xs))
-                    IconButton(onClick = { viewModel.saveFile() }) {
-                        Icon(Icons.Filled.Save, contentDescription = stringResource(R.string.editor_save), modifier = Modifier.size(18.dp))
+                    IconButton(onClick = { viewModel.undo() }, enabled = uiState.undoStack.isNotEmpty()) {
+                        Icon(Icons.Filled.Undo, contentDescription = "Undo", modifier = Modifier.size(20.dp))
+                    }
+                    IconButton(onClick = { viewModel.redo() }, enabled = uiState.redoStack.isNotEmpty()) {
+                        Icon(Icons.Filled.Redo, contentDescription = "Redo", modifier = Modifier.size(20.dp))
+                    }
+                    
+                    Spacer(Modifier.weight(1f))
+                    
+                    if (uiState.activeFile?.isModified == true) {
+                        NvChip(
+                            label = "Modified",
+                            variant = NvChipVariant.WARNING,
+                            icon = Icons.Filled.Edit
+                        )
+                        Spacer(Modifier.width(NvSpacing.Sm))
+                        IconButton(onClick = { viewModel.saveFile() }) {
+                            Icon(Icons.Filled.Save, contentDescription = "Save", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                        }
                     }
                 }
             }
 
-            // File tabs
+            // Tabs
             if (uiState.openFiles.isNotEmpty()) {
                 ScrollableTabRow(
                     selectedTabIndex = maxOf(0, uiState.activeFileIndex),
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                    edgePadding = NvSpacing.Xs,
-                    divider = {}
+                    edgePadding = 0.dp,
+                    divider = {},
+                    indicator = { tabPositions ->
+                        if (uiState.activeFileIndex < tabPositions.size) {
+                            TabRowDefaults.SecondaryIndicator(
+                                Modifier.tabIndicatorOffset(tabPositions[uiState.activeFileIndex]),
+                                color = MaterialTheme.colorScheme.primary,
+                                height = 2.dp
+                            )
+                        }
+                    }
                 ) {
                     uiState.openFiles.forEachIndexed { index, file ->
                         Tab(
                             selected = index == uiState.activeFileIndex,
                             onClick = { viewModel.setActiveFile(index) },
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (file.isModified) {
-                                        Surface(
-                                            modifier = Modifier.size(6.dp),
-                                            shape = MaterialTheme.shapes.extraLarge,
-                                            color = BuildBuddyThemeExtended.colors.warning
-                                        ) {}
-                                        Spacer(Modifier.width(4.dp))
-                                    }
-                                    Text(file.name, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                                    Spacer(Modifier.width(4.dp))
-                                    IconButton(onClick = { viewModel.closeFile(index) }, modifier = Modifier.size(16.dp)) {
-                                        Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(12.dp))
-                                    }
+                            modifier = Modifier.height(40.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = NvSpacing.Sm),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (file.isModified) {
+                                    Surface(
+                                        modifier = Modifier.size(6.dp),
+                                        shape = MaterialTheme.shapes.extraLarge,
+                                        color = BuildBuddyThemeExtended.colors.warning
+                                    ) {}
+                                    Spacer(Modifier.width(NvSpacing.Xxs))
+                                }
+                                Text(
+                                    text = file.name,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1,
+                                    color = if (index == uiState.activeFileIndex) MaterialTheme.colorScheme.primary 
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(NvSpacing.Xxs))
+                                IconButton(
+                                    onClick = { viewModel.closeFile(index) },
+                                    modifier = Modifier.size(16.dp)
+                                ) {
+                                    Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(12.dp))
                                 }
                             }
-                        )
+                        }
                     }
                 }
             }
 
-            // Editor content
-            if (uiState.activeFile == null) {
-                NvEmptyState(
-                    icon = Icons.Filled.Code,
-                    title = stringResource(R.string.editor_no_file),
-                    subtitle = "Select a file from the tree to start editing",
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                val activeFile = uiState.activeFile!!
-                val extendedColors = BuildBuddyThemeExtended.colors
-                val scrollState = rememberScrollState()
+            // Editor
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                if (uiState.activeFile == null) {
+                    NvEmptyState(
+                        icon = Icons.Filled.Code,
+                        title = "No file open",
+                        subtitle = "Select a file from the explorer to start coding",
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    val activeFile = uiState.activeFile!!
+                    val extendedColors = BuildBuddyThemeExtended.colors
+                    val scrollState = rememberScrollState()
 
-                Row(modifier = Modifier.fillMaxSize()) {
-                    // Line numbers gutter
-                    if (uiState.showLineNumbers) {
-                        val lineCount = activeFile.content.count { it == '\n' } + 1
-                        Column(
-                            modifier = Modifier
-                                .width(48.dp)
-                                .fillMaxHeight()
-                                .background(extendedColors.editorGutter)
-                                .verticalScroll(scrollState)
-                                .padding(end = NvSpacing.Xs, top = NvSpacing.Xs),
-                            horizontalAlignment = Alignment.End
-                        ) {
-                            for (i in 1..lineCount) {
-                                Text(
-                                    text = i.toString(),
-                                    style = TextStyle(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = uiState.fontSize.sp,
-                                        lineHeight = (uiState.fontSize + 6).sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    Row(modifier = Modifier.fillMaxSize().background(extendedColors.editorBackground)) {
+                        // Gutter
+                        if (uiState.showLineNumbers) {
+                            val lineCount = activeFile.content.count { it == '\n' } + 1
+                            Column(
+                                modifier = Modifier
+                                    .width(44.dp)
+                                    .fillMaxHeight()
+                                    .background(extendedColors.editorGutter)
+                                    .verticalScroll(scrollState)
+                                    .padding(vertical = NvSpacing.Sm, horizontal = NvSpacing.Xxs),
+                                horizontalAlignment = Alignment.End
+                            ) {
+                                for (i in 1..lineCount) {
+                                    Text(
+                                        text = i.toString(),
+                                        style = TextStyle(
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = (uiState.fontSize - 2).sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                        )
                                     )
-                                )
+                                }
                             }
                         }
-                    }
 
-                    // Code editor
-                    var textFieldValue by remember(activeFile.path, activeFile.content) {
-                        mutableStateOf(TextFieldValue(activeFile.content))
-                    }
+                        // Text Field
+                        var textFieldValue by remember(activeFile.path, activeFile.content) {
+                            mutableStateOf(TextFieldValue(activeFile.content))
+                        }
 
-                    BasicTextField(
-                        value = textFieldValue,
-                        onValueChange = { newValue ->
-                            textFieldValue = newValue
-                            if (newValue.text != activeFile.content) {
-                                viewModel.updateFileContent(newValue.text)
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(extendedColors.editorBackground)
-                            .verticalScroll(scrollState)
-                            .padding(NvSpacing.Xs),
-                        textStyle = TextStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = uiState.fontSize.sp,
-                            lineHeight = (uiState.fontSize + 6).sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
-                    )
+                        BasicTextField(
+                            value = textFieldValue,
+                            onValueChange = { newValue ->
+                                textFieldValue = newValue
+                                if (newValue.text != activeFile.content) {
+                                    viewModel.updateFileContent(newValue.text)
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(scrollState)
+                                .padding(NvSpacing.Sm),
+                            textStyle = TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = uiState.fontSize.sp,
+                                lineHeight = (uiState.fontSize * 1.5).sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            ),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
+                        )
+                    }
                 }
             }
         }
@@ -210,18 +237,16 @@ fun WorkspaceScreen(
 
     // Dialogs
     if (showCreateFileDialog) {
-        CreateFileDialog(
-            title = stringResource(R.string.files_create_title),
-            placeholder = stringResource(R.string.files_name_hint),
+        CreateNameDialog(
+            title = "New File",
             onConfirm = { name -> viewModel.createFile(name); showCreateFileDialog = false },
             onDismiss = { showCreateFileDialog = false }
         )
     }
 
     if (showCreateFolderDialog) {
-        CreateFileDialog(
-            title = stringResource(R.string.files_create_folder_title),
-            placeholder = stringResource(R.string.files_folder_name_hint),
+        CreateNameDialog(
+            title = "New Folder",
             onConfirm = { name -> viewModel.createFolder(name); showCreateFolderDialog = false },
             onDismiss = { showCreateFolderDialog = false }
         )
@@ -229,9 +254,9 @@ fun WorkspaceScreen(
 
     showDeleteDialog?.let { path ->
         NvAlertDialog(
-            title = stringResource(R.string.files_delete),
-            message = stringResource(R.string.files_delete_confirm, path.substringAfterLast("/")),
-            confirmText = stringResource(R.string.action_delete),
+            title = "Delete item",
+            message = "Are you sure you want to delete ${path.substringAfterLast("/")}?",
+            confirmText = "Delete",
             onConfirm = { viewModel.deleteFile(path); showDeleteDialog = null },
             onDismiss = { showDeleteDialog = null },
             isDestructive = true
@@ -251,35 +276,30 @@ private fun FileTreePanel(
     onCollapse: () -> Unit
 ) {
     Column {
-        // Toolbar
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = NvSpacing.Xs, vertical = NvSpacing.Xxs),
+            modifier = Modifier.fillMaxWidth().padding(NvSpacing.Sm),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Files", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-            IconButton(onClick = onCreateFile) {
-                Icon(Icons.Filled.NoteAdd, contentDescription = "New File", modifier = Modifier.size(16.dp))
+            Text("EXPLORER", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+            IconButton(onClick = onCreateFile, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.NoteAdd, contentDescription = null, modifier = Modifier.size(18.dp))
             }
-            IconButton(onClick = onCreateFolder) {
-                Icon(Icons.Filled.CreateNewFolder, contentDescription = "New Folder", modifier = Modifier.size(16.dp))
+            IconButton(onClick = onCreateFolder, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
             }
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Refresh", modifier = Modifier.size(16.dp))
+            IconButton(onClick = onRefresh, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
             }
-            IconButton(onClick = onCollapse) {
-                Icon(Icons.Filled.ChevronLeft, contentDescription = "Collapse", modifier = Modifier.size(16.dp))
+            IconButton(onClick = onCollapse, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.ChevronLeft, contentDescription = null, modifier = Modifier.size(18.dp))
             }
         }
-        HorizontalDivider()
+        
+        HorizontalDivider(modifier = Modifier.alpha(0.3f))
 
-        // File tree
         if (uiState.isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(modifier = Modifier.size(24.dp))
-            }
-        } else if (uiState.fileTree == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No files", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -320,50 +340,43 @@ private fun FileTreeNode(
                     if (node.isDirectory) onToggleExpand(node.path)
                     else onOpenFile(node.path)
                 }
-                .padding(
-                    start = (depth * 12 + 8).dp,
-                    top = NvSpacing.Xxs,
-                    bottom = NvSpacing.Xxs,
-                    end = NvSpacing.Xs
-                ),
+                .padding(start = (depth * 12 + 12).dp, end = NvSpacing.Xs, top = 4.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (node.isDirectory) {
-                Icon(
-                    if (isExpanded) Icons.Filled.FolderOpen else Icons.Filled.Folder,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            } else {
-                val icon = when (node.fileType) {
-                    FileType.KOTLIN -> Icons.Filled.Code
-                    FileType.JAVA -> Icons.Filled.Code
-                    FileType.XML -> Icons.Filled.DataObject
-                    FileType.GRADLE, FileType.GRADLE_KTS -> Icons.Filled.Build
-                    FileType.JSON -> Icons.Filled.DataObject
-                    FileType.MARKDOWN -> Icons.Filled.Description
-                    else -> Icons.Filled.InsertDriveFile
-                }
-                Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Spacer(Modifier.width(NvSpacing.Xxs))
+            Icon(
+                imageVector = if (node.isDirectory) {
+                    if (isExpanded) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowRight
+                } else {
+                    when (node.fileType) {
+                        FileType.KOTLIN, FileType.JAVA -> Icons.Filled.Code
+                        FileType.XML, FileType.JSON -> Icons.Filled.DataObject
+                        FileType.MARKDOWN -> Icons.Filled.Description
+                        else -> Icons.Filled.InsertDriveFile
+                    }
+                },
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = if (node.isDirectory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            )
+            Spacer(Modifier.width(NvSpacing.Xs))
             Text(
                 text = node.name,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
+            
             Box {
-                IconButton(onClick = { showMenu = true }, modifier = Modifier.size(20.dp)) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = null, modifier = Modifier.size(12.dp))
+                IconButton(onClick = { showMenu = true }, modifier = Modifier.size(24.dp)) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = null, modifier = Modifier.size(14.dp))
                 }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                     DropdownMenuItem(
-                        text = { Text("Delete", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error) },
+                        text = { Text("Delete") },
                         onClick = { showMenu = false; onDelete(node.path) },
-                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.error) }
+                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.error, leadingIconColor = MaterialTheme.colorScheme.error)
                     )
                 }
             }
@@ -385,31 +398,30 @@ private fun FileTreeNode(
 }
 
 @Composable
-private fun CreateFileDialog(
+private fun CreateNameDialog(
     title: String,
-    placeholder: String,
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title, style = MaterialTheme.typography.titleMedium) },
+        title = { Text(title) },
         text = {
             NvTextField(
                 value = name,
                 onValueChange = { name = it },
-                placeholder = placeholder,
+                placeholder = "Name",
                 singleLine = true
             )
         },
         confirmButton = {
-            TextButton(onClick = { if (name.isNotBlank()) onConfirm(name) }, enabled = name.isNotBlank()) {
-                Text(stringResource(R.string.action_confirm))
+            TextButton(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) {
+                Text("Confirm")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }

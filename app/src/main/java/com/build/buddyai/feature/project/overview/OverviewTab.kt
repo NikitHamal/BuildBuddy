@@ -1,5 +1,7 @@
 package com.build.buddyai.feature.project.overview
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -10,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -21,6 +24,7 @@ import com.build.buddyai.feature.project.playground.PlaygroundTab
 import java.text.SimpleDateFormat
 import java.util.*
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OverviewTab(
     projectId: String,
@@ -40,77 +44,160 @@ fun OverviewTab(
         return
     }
 
-    val dateFormat = remember { SimpleDateFormat("MMM d, yyyy HH:mm", Locale.getDefault()) }
+    val dateFormat = remember { SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.getDefault()) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(NvSpacing.Md),
-        verticalArrangement = Arrangement.spacedBy(NvSpacing.Sm)
+        verticalArrangement = Arrangement.spacedBy(NvSpacing.Md)
     ) {
-        // Project info card
+        // Project Identity Card
         item {
             NvCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(NvSpacing.Md)) {
-                    Text(project.name, style = MaterialTheme.typography.titleLarge)
-                    Text(project.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            modifier = Modifier.size(48.dp),
+                            shape = NvShapes.medium,
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        ) {
+                            Icon(
+                                Icons.Filled.RocketLaunch,
+                                contentDescription = null,
+                                modifier = Modifier.padding(NvSpacing.Sm),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(Modifier.width(NvSpacing.Md))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(project.name, style = MaterialTheme.typography.headlineSmall)
+                            Text(project.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    
                     if (project.description.isNotBlank()) {
-                        Spacer(Modifier.height(NvSpacing.Xs))
-                        Text(project.description, style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(NvSpacing.Md))
+                        Text(
+                            project.description,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                    Spacer(Modifier.height(NvSpacing.Sm))
-                    Row(horizontalArrangement = Arrangement.spacedBy(NvSpacing.Xs)) {
-                        NvStatusChip(label = project.language.displayName, containerColor = MaterialTheme.colorScheme.secondaryContainer)
-                        NvStatusChip(label = project.uiFramework.displayName, containerColor = MaterialTheme.colorScheme.tertiaryContainer)
-                        NvStatusChip(label = project.template.displayName, containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)
+
+                    Spacer(Modifier.height(NvSpacing.Md))
+                    
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(NvSpacing.Sm),
+                        verticalArrangement = Arrangement.spacedBy(NvSpacing.Sm)
+                    ) {
+                        NvChip(label = project.language.displayName, variant = NvChipVariant.PRIMARY)
+                        NvChip(label = project.uiFramework.displayName, variant = NvChipVariant.SECONDARY)
+                        NvChip(label = project.template.displayName, variant = NvChipVariant.TERTIARY)
                     }
-                    Spacer(Modifier.height(NvSpacing.Xs))
-                    Row(horizontalArrangement = Arrangement.spacedBy(NvSpacing.Md)) {
-                        Text("Min SDK: ${project.minSdk}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Target SDK: ${project.targetSdk}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Text("Created: ${dateFormat.format(Date(project.createdAt))}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+        }
+
+        // Build & Runtime Info
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(NvSpacing.Md)
+            ) {
+                InfoTile(
+                    title = "Target SDK",
+                    value = project.targetSdk.toString(),
+                    icon = Icons.Filled.Android,
+                    modifier = Modifier.weight(1f)
+                )
+                InfoTile(
+                    title = "Min SDK",
+                    value = project.minSdk.toString(),
+                    icon = Icons.Filled.SettingsSystemDaydream,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
 
         // Build status card
         item {
-            NvCard(modifier = Modifier.fillMaxWidth()) {
+            NvCard(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { onNavigateToTab(PlaygroundTab.BUILD) }
+            ) {
                 Column(modifier = Modifier.padding(NvSpacing.Md)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Build, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(NvSpacing.Xs))
-                        Text(stringResource(R.string.build_last_build), style = MaterialTheme.typography.titleSmall)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val buildStatusColor = when (project.lastBuildStatus) {
+                            BuildStatus.SUCCESS -> BuildBuddyThemeExtended.colors.success
+                            BuildStatus.FAILED -> MaterialTheme.colorScheme.error
+                            BuildStatus.BUILDING -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .background(buildStatusColor, shape = MaterialTheme.shapes.extraLarge)
+                        )
+                        Spacer(Modifier.width(NvSpacing.Sm))
+                        Text(
+                            "LAST BUILD STATUS",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
                     }
-                    Spacer(Modifier.height(NvSpacing.Xs))
-                    val buildStatusColor = when (project.lastBuildStatus) {
-                        BuildStatus.SUCCESS -> BuildBuddyThemeExtended.colors.success
-                        BuildStatus.FAILED -> MaterialTheme.colorScheme.error
-                        BuildStatus.BUILDING -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                    Text(project.lastBuildStatus.displayName, style = MaterialTheme.typography.bodyMedium, color = buildStatusColor)
-                    if (project.lastBuildAt != null) {
-                        Text("Built: ${dateFormat.format(Date(project.lastBuildAt))}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    
                     Spacer(Modifier.height(NvSpacing.Sm))
-                    NvFilledButton(
-                        text = stringResource(R.string.build_start),
-                        onClick = { onNavigateToTab(PlaygroundTab.BUILD) },
-                        icon = Icons.Filled.PlayArrow
+                    
+                    Text(
+                        project.lastBuildStatus.displayName,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = when (project.lastBuildStatus) {
+                            BuildStatus.SUCCESS -> BuildBuddyThemeExtended.colors.success
+                            BuildStatus.FAILED -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurface
+                        }
                     )
+                    
+                    if (project.lastBuildAt != null) {
+                        Text(
+                            "Finished ${dateFormat.format(Date(project.lastBuildAt))}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            "No builds yet",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
 
         // Quick actions
         item {
-            Text(stringResource(R.string.home_quick_actions), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = NvSpacing.Xs))
+            Text(
+                "QUICK ACTIONS",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = NvSpacing.Sm)
+            )
         }
+        
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(NvSpacing.Sm)
+                horizontalArrangement = Arrangement.spacedBy(NvSpacing.Md)
             ) {
                 OverviewActionCard(
                     icon = Icons.Filled.Psychology,
@@ -120,24 +207,44 @@ fun OverviewTab(
                 )
                 OverviewActionCard(
                     icon = Icons.Filled.Code,
-                    label = "Workspace",
+                    label = "Editor",
                     modifier = Modifier.weight(1f),
                     onClick = { onNavigateToTab(PlaygroundTab.WORKSPACE) }
                 )
-            }
-        }
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(NvSpacing.Sm)
-            ) {
                 OverviewActionCard(
                     icon = Icons.Filled.Build,
-                    label = stringResource(R.string.playground_build),
+                    label = "Build",
                     modifier = Modifier.weight(1f),
                     onClick = { onNavigateToTab(PlaygroundTab.BUILD) }
                 )
             }
+        }
+        
+        item {
+            Text(
+                "Created on ${SimpleDateFormat("MMMM d, yyyy", Locale.getDefault()).format(Date(project.createdAt))}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+private fun InfoTile(
+    title: String,
+    value: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier
+) {
+    NvCard(modifier = modifier) {
+        Column(modifier = Modifier.padding(NvSpacing.Md)) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(NvSpacing.Sm))
+            Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleMedium)
         }
     }
 }
@@ -149,14 +256,17 @@ private fun OverviewActionCard(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    NvCard(modifier = modifier, onClick = onClick) {
+    NvCard(
+        modifier = modifier,
+        onClick = onClick
+    ) {
         Column(
-            modifier = Modifier.padding(NvSpacing.Md),
+            modifier = Modifier.padding(NvSpacing.Md).fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(NvSpacing.Xs))
-            Text(label, style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.height(NvSpacing.Sm))
+            Text(label, style = MaterialTheme.typography.labelSmall, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }

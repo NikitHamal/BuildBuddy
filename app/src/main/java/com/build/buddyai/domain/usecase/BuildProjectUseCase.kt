@@ -112,6 +112,8 @@ class BuildProjectUseCase @Inject constructor(
             // Phase 6: Packaging (80-90%)
             onEvent(BuildEvent.Progress(0.85f, "Packaging APK…"))
             onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Assembling APK package…")))
+            onEvent(BuildEvent.Log(logEntry(LogLevel.WARNING, "Note: On-device APK assembly is currently simulated.")))
+            onEvent(BuildEvent.Log(logEntry(LogLevel.WARNING, "Full Gradle compilation requires a local toolchain (aapt2, d8, kotlinc).")))
 
             val artifactsDir = FileUtils.getArtifactsDir(context)
             val artifactFile = File(artifactsDir, "${project.name.replace(" ", "_")}_${buildId.take(8)}.apk")

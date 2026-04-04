@@ -277,67 +277,121 @@ private fun ProjectListItem(
     NvCard(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = NvSpacing.Md, vertical = NvSpacing.Xxs),
+            .padding(horizontal = NvSpacing.Md, vertical = NvSpacing.Xs),
         onClick = onClick
     ) {
-        Row(
-            modifier = Modifier.padding(NvSpacing.Sm),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Icon
-            Surface(
-                modifier = Modifier.size(40.dp),
-                shape = NvShapes.small,
-                color = MaterialTheme.colorScheme.primaryContainer
+        Column(modifier = Modifier.padding(NvSpacing.Md)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
             ) {
-                Icon(
-                    Icons.Filled.Folder,
-                    contentDescription = null,
-                    modifier = Modifier.padding(NvSpacing.Xs),
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                // Icon
+                Surface(
+                    modifier = Modifier.size(48.dp),
+                    shape = NvShapes.medium,
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                    border = BorderStroke(NvBorder.Hairline, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+                ) {
+                    Icon(
+                        Icons.Filled.Folder,
+                        contentDescription = null,
+                        modifier = Modifier.padding(NvSpacing.Sm),
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+
+                Spacer(Modifier.width(NvSpacing.Md))
+
+                // Info
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = project.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = project.packageName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                // Menu
+                Box {
+                    IconButton(
+                        onClick = { showMenu = true },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = stringResource(R.string.action_more),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false },
+                        shape = NvShapes.medium,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Duplicate") },
+                            onClick = { showMenu = false; onDuplicate() },
+                            leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.action_delete)) },
+                            onClick = { showMenu = false; onDelete() },
+                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                            colors = MenuDefaults.itemColors(
+                                textColor = MaterialTheme.colorScheme.error,
+                                leadingIconColor = MaterialTheme.colorScheme.error
+                            )
+                        )
+                    }
+                }
             }
 
-            Spacer(Modifier.width(NvSpacing.Sm))
+            Spacer(Modifier.height(NvSpacing.Md))
 
-            // Info
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = project.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = project.packageName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            // Metadata & Badges
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(NvSpacing.Xs),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = project.language.displayName,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    NvChip(
+                        label = project.language.displayName,
+                        icon = if (project.language == ProjectLanguage.KOTLIN) Icons.Filled.Code else Icons.Filled.Code
                     )
-                    Text("·", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(
-                        text = project.uiFramework.displayName,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    NvChip(
+                        label = project.uiFramework.displayName,
+                        variant = NvChipVariant.SECONDARY
                     )
-                    if (project.lastBuildStatus != BuildStatus.NONE) {
-                        Text("·", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        val statusColor = when (project.lastBuildStatus) {
-                            BuildStatus.SUCCESS -> BuildBuddyThemeExtended.colors.success
-                            BuildStatus.FAILED -> MaterialTheme.colorScheme.error
-                            BuildStatus.BUILDING -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                        }
+                }
+
+                if (project.lastBuildStatus != BuildStatus.NONE) {
+                    val (statusColor, statusIcon) = when (project.lastBuildStatus) {
+                        BuildStatus.SUCCESS -> BuildBuddyThemeExtended.colors.success to Icons.Filled.CheckCircle
+                        BuildStatus.FAILED -> MaterialTheme.colorScheme.error to Icons.Filled.Error
+                        BuildStatus.BUILDING -> MaterialTheme.colorScheme.primary to Icons.Filled.HourglassTop
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant to Icons.Filled.PlayCircle
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            statusIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = statusColor
+                        )
+                        Spacer(Modifier.width(NvSpacing.Xxs))
                         Text(
                             text = project.lastBuildStatus.displayName,
                             style = MaterialTheme.typography.labelSmall,
@@ -346,25 +400,7 @@ private fun ProjectListItem(
                     }
                 }
             }
-
-            // Menu
-            Box {
-                IconButton(onClick = { showMenu = true }) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.action_more))
-                }
-                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Duplicate") },
-                        onClick = { showMenu = false; onDuplicate() },
-                        leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.action_delete)) },
-                        onClick = { showMenu = false; onDelete() },
-                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) }
-                    )
-                }
-            }
         }
     }
 }
+
