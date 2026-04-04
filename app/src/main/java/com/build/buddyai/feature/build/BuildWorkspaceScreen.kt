@@ -21,6 +21,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,13 +42,15 @@ import java.util.*
 @Composable
 fun BuildWorkspaceScreen(
     projectId: String,
-    onNavigateToAgent: () -> Unit,
-    buildViewModel: BuildViewModel = hiltViewModel(),
-    artifactsViewModel: ArtifactsViewModel = hiltViewModel(key = "artifacts")
+    onNavigateToAgent: () -> Unit
 ) {
+    val buildViewModel: BuildViewModel = hiltViewModel()
+    val artifactsViewModel: ArtifactsViewModel = hiltViewModel()
+    
     val buildUiState by buildViewModel.uiState.collectAsStateWithLifecycle()
     val artifactsUiState by artifactsViewModel.uiState.collectAsStateWithLifecycle()
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
+    
     var showDeleteDialog by remember { mutableStateOf<BuildArtifact?>(null) }
     var showLogs by remember { mutableStateOf(true) }
     var showHistory by remember { mutableStateOf(false) }

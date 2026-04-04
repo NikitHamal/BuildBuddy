@@ -32,9 +32,9 @@ fun HomeScreen(
     onNavigateToCreateProject: () -> Unit,
     onNavigateToProject: (String) -> Unit,
     onNavigateToSettings: () -> Unit,
-    onNavigateToModels: () -> Unit,
-    viewModel: HomeViewModel = hiltViewModel()
+    onNavigateToModels: () -> Unit
 ) {
+    val viewModel: HomeViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
 

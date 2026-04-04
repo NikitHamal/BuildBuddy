@@ -22,9 +22,9 @@ import com.build.buddyai.core.model.*
 @Composable
 fun CreateProjectScreen(
     onProjectCreated: (String) -> Unit,
-    onBack: () -> Unit,
-    viewModel: CreateProjectViewModel = hiltViewModel()
+    onBack: () -> Unit
 ) {
+    val viewModel: CreateProjectViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     LaunchedEffect(uiState.createdProjectId) {

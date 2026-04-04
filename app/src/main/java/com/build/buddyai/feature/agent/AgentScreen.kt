@@ -27,9 +27,9 @@ import com.build.buddyai.core.model.AgentMode
 fun AgentScreen(
     projectId: String,
     onBack: () -> Unit,
-    onNavigateToModels: () -> Unit,
-    viewModel: AgentViewModel = hiltViewModel()
+    onNavigateToModels: () -> Unit
 ) {
+    val viewModel: AgentViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
 

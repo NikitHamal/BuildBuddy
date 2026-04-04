@@ -30,9 +30,9 @@ import java.util.*
 fun OverviewTab(
     projectId: String,
     onNavigateToTab: (PlaygroundTab) -> Unit,
-    onNavigateToAgent: () -> Unit,
-    viewModel: OverviewViewModel = hiltViewModel()
+    onNavigateToAgent: () -> Unit
 ) {
+    val viewModel: OverviewViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     LaunchedEffect(projectId) { viewModel.loadProject(projectId) }

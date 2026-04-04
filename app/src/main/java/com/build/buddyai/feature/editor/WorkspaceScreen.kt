@@ -32,9 +32,9 @@ import com.build.buddyai.core.model.FileType
 
 @Composable
 fun WorkspaceScreen(
-    projectId: String,
-    viewModel: WorkspaceViewModel = hiltViewModel()
+    projectId: String
 ) {
+    val viewModel: WorkspaceViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showCreateFileDialog by remember { mutableStateOf(false) }
     var showCreateFolderDialog by remember { mutableStateOf(false) }

@@ -29,9 +29,9 @@ fun PlaygroundScreen(
     onBack: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToModels: () -> Unit,
-    onNavigateToAgent: () -> Unit,
-    viewModel: PlaygroundViewModel = hiltViewModel()
+    onNavigateToAgent: () -> Unit
 ) {
+    val viewModel: PlaygroundViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var selectedTab by remember { mutableStateOf(PlaygroundTab.OVERVIEW) }
 

@@ -31,9 +31,9 @@ import java.util.*
 
 @Composable
 fun ArtifactsTab(
-    projectId: String,
-    viewModel: ArtifactsViewModel = hiltViewModel()
+    projectId: String
 ) {
+    val viewModel: ArtifactsViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showDeleteDialog by remember { mutableStateOf<BuildArtifact?>(null) }

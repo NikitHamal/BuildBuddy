@@ -22,9 +22,9 @@ import com.build.buddyai.core.model.ThemeMode
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
-    onNavigateToModels: () -> Unit,
-    viewModel: SettingsViewModel = hiltViewModel()
+    onNavigateToModels: () -> Unit
 ) {
+    val viewModel: SettingsViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }

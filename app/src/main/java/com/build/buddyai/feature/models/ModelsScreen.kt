@@ -25,9 +25,9 @@ import java.util.concurrent.TimeUnit
 
 @Composable
 fun ModelsScreen(
-    onBack: () -> Unit,
-    viewModel: ModelsViewModel = hiltViewModel()
+    onBack: () -> Unit
 ) {
+    val viewModel: ModelsViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     Scaffold(
