@@ -17,6 +17,8 @@ class GenerateProjectFilesUseCase @Inject constructor(
         val projectDir = File(project.projectPath)
         projectDir.mkdirs()
 
+        extractGradleWrapper(projectDir)
+
         when (project.template) {
             ProjectTemplate.BLANK_COMPOSE -> generateComposeProject(projectDir, project)
             ProjectTemplate.BLANK_VIEWS -> generateViewsProject(projectDir, project)
@@ -395,5 +397,27 @@ android.nonTransitiveRClass=true
 
 </manifest>
 """.trimIndent())
+    }
+
+    private fun copyAssetFile(assetPath: String, destFile: File) {
+        destFile.parentFile?.mkdirs()
+        try {
+            context.assets.open(assetPath).use { input ->
+                java.io.FileOutputStream(destFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun extractGradleWrapper(dir: File) {
+        copyAssetFile("gradle_wrapper/gradlew", File(dir, "gradlew"))
+        File(dir, "gradlew").setExecutable(true)
+        copyAssetFile("gradle_wrapper/gradlew.bat", File(dir, "gradlew.bat"))
+        copyAssetFile("gradle_wrapper/gradle/libs.versions.toml", File(dir, "gradle/libs.versions.toml"))
+        copyAssetFile("gradle_wrapper/gradle/wrapper/gradle-wrapper.jar", File(dir, "gradle/wrapper/gradle-wrapper.jar"))
+        copyAssetFile("gradle_wrapper/gradle/wrapper/gradle-wrapper.properties", File(dir, "gradle/wrapper/gradle-wrapper.properties"))
     }
 }
