@@ -1,6 +1,7 @@
 package com.build.buddyai.core.network
 
 import com.build.buddyai.core.model.AiModel
+import com.build.buddyai.core.model.ModelMetadataRegistry
 import com.build.buddyai.core.model.ProviderType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -232,12 +233,33 @@ class AiApiService @Inject constructor(
             ProviderType.NVIDIA, ProviderType.OPENROUTER, ProviderType.PAXSENIX -> root["data"]?.jsonArray?.mapNotNull { element ->
                 val item = element.jsonObject
                 val id = item["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                
+                // Try to get context window from API response, then from registry, then fallback
+                val apiContextWindow = item["context_length"]?.jsonPrimitive?.intOrNull
+                    ?: item["max_context_length"]?.jsonPrimitive?.intOrNull
+                    ?: item["context_size"]?.jsonPrimitive?.intOrNull
+                    ?: item["max_tokens"]?.jsonPrimitive?.intOrNull
+                
+                val apiMaxTokens = item["max_tokens"]?.jsonPrimitive?.intOrNull
+                    ?: item["max_output_tokens"]?.jsonPrimitive?.intOrNull
+                    ?: item["max_completion_tokens"]?.jsonPrimitive?.intOrNull
+                
+                val registryInfo = ModelMetadataRegistry.getModelInfo(id)
+                
+                val contextWindow = apiContextWindow 
+                    ?: registryInfo?.contextWindow 
+                    ?: 4096
+                val maxTokens = apiMaxTokens 
+                    ?: registryInfo?.maxTokens 
+                    ?: 4096
+                
                 AiModel(
                     id = id,
                     name = item["name"]?.jsonPrimitive?.contentOrNull ?: id,
                     providerId = providerType.name.lowercase(),
                     providerType = providerType,
-                    contextWindow = item["context_length"]?.jsonPrimitive?.intOrNull ?: 4096,
+                    contextWindow = contextWindow,
+                    maxTokens = maxTokens,
                     supportsStreaming = true,
                     description = item["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
                 )
@@ -246,12 +268,33 @@ class AiApiService @Inject constructor(
                 val item = element.jsonObject
                 val name = item["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
                 val id = name.substringAfterLast('/')
+                
+                // Try to get context window from API response, then from registry, then fallback
+                val apiContextWindow = item["inputTokenLimit"]?.jsonPrimitive?.intOrNull
+                    ?: item["input_token_limit"]?.jsonPrimitive?.intOrNull
+                    ?: item["contextWindow"]?.jsonPrimitive?.intOrNull
+                
+                val apiMaxTokens = item["outputTokenLimit"]?.jsonPrimitive?.intOrNull
+                    ?: item["output_token_limit"]?.jsonPrimitive?.intOrNull
+                    ?: item["maxOutputTokens"]?.jsonPrimitive?.intOrNull
+                    ?: item["max_output_tokens"]?.jsonPrimitive?.intOrNull
+                
+                val registryInfo = ModelMetadataRegistry.getModelInfo(id)
+                
+                val contextWindow = apiContextWindow 
+                    ?: registryInfo?.contextWindow 
+                    ?: 4096
+                val maxTokens = apiMaxTokens 
+                    ?: registryInfo?.maxTokens 
+                    ?: 4096
+                
                 AiModel(
                     id = id,
                     name = item["displayName"]?.jsonPrimitive?.contentOrNull ?: id,
                     providerId = providerType.name.lowercase(),
                     providerType = providerType,
-                    contextWindow = item["inputTokenLimit"]?.jsonPrimitive?.intOrNull ?: 4096,
+                    contextWindow = contextWindow,
+                    maxTokens = maxTokens,
                     supportsStreaming = true,
                     description = item["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
                 )

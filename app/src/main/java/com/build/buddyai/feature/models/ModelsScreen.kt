@@ -336,9 +336,30 @@ private fun ModelSelectionItem(
             if (model.description.isNotBlank()) {
                 Text(model.description, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(NvSpacing.Sm)) {
+                Text(
+                    "Context: ${formatTokenCount(model.contextWindow)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "Max: ${formatTokenCount(model.maxTokens)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
-        Text("${model.contextWindow / 1000}K", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+}
+
+/**
+ * Formats token counts in a human-readable way.
+ * Shows "K" for thousands, "M" for millions.
+ */
+private fun formatTokenCount(tokens: Int): String = when {
+    tokens >= 1_000_000 -> "${tokens / 1_000_000}M"
+    tokens >= 1000 -> "${tokens / 1000}K"
+    else -> tokens.toString()
 }
 
 private fun getTimeAgo(timestampMs: Long): String {

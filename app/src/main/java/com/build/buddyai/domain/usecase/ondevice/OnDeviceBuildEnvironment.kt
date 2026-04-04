@@ -1,16 +1,19 @@
 package com.build.buddyai.domain.usecase.ondevice
 
 import android.content.Context
-import android.os.Build
-import android.system.Os
 import java.io.File
 import java.util.zip.ZipInputStream
 
 /**
- * Manages extraction and caching of build tools (aapt2, android.jar, testkey)
- * from the app's assets to the device's internal storage.
+ * Manages setup of build tools needed by the on-device build pipeline.
  *
- * All tools run on the device's ART runtime - no JDK required.
+ * AAPT2 is shipped as a JNI library (libaapt2.so) so Android's package manager
+ * installs it with the correct SELinux context that allows execution via execve().
+ * This sidesteps the Android 10+ restriction that blocks executing files from
+ * app_data_file labeled directories (i.e. filesDir).
+ *
+ * android.jar, core-lambda-stubs.jar, and testkey are extracted from assets
+ * on first run.
  */
 object OnDeviceBuildEnvironment {
 
@@ -35,8 +38,11 @@ object OnDeviceBuildEnvironment {
 
             val toolsDir = File(context.filesDir, "build_tools").also { it.mkdirs() }
 
-            aapt2Binary = extractAapt2(context, toolsDir)
+            // AAPT2: shipped as libaapt2.so in jniLibs → installed by package manager
+            // with proper SELinux context (app_executable_file), already executable.
+            aapt2Binary = resolveAapt2(context)
 
+            // android.jar: large, compressed in assets → extract to filesDir on first run
             val androidJarZip = File(toolsDir, "android.jar.zip")
             androidJar = File(toolsDir, "android.jar")
             extractAsset(context, "$ASSETS_PREFIX/android.jar.zip", androidJarZip)
@@ -65,80 +71,43 @@ object OnDeviceBuildEnvironment {
 
     // ─── Private helpers ──────────────────────────────────────────────────────
 
-    private fun extractAapt2(context: Context, toolsDir: File): File {
-        val abi = selectAbi()
-        val target = File(toolsDir, "aapt2")
-
-        // Always re-extract + re-chmod on every cold start so permissions are fresh.
-        // extractAsset skips if file is already identical in size.
-        extractAsset(context, "$ASSETS_PREFIX/aapt2-$abi", target)
-        makeExecutable(target)
-
-        // Verify executable - throw early with a clear message if all methods fail
-        if (!target.canExecute()) {
+    /**
+     * Resolves the aapt2 binary from the app's native library directory.
+     * The package manager installs libaapt2.so there with execute permission and
+     * the correct SELinux label, so no chmod is needed.
+     */
+    private fun resolveAapt2(context: Context): File {
+        val nativeLibDir = context.applicationInfo.nativeLibraryDir
+        val aapt2 = File(nativeLibDir, "libaapt2.so")
+        if (!aapt2.exists()) {
             throw RuntimeException(
-                "aapt2 binary at ${target.absolutePath} is not executable after chmod. " +
-                "Device ABI: $abi, File size: ${target.length()}"
+                "libaapt2.so not found in nativeLibraryDir ($nativeLibDir). " +
+                "Ensure the app was installed from a valid APK (not run directly from IDE)."
             )
         }
-
-        return target
-    }
-
-    private fun selectAbi(): String {
-        val supported = Build.SUPPORTED_ABIS.toList()
-        // Pick the best ABI we have a binary for
-        for (candidate in listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")) {
-            if (supported.any { it == candidate }) return candidate
+        if (!aapt2.canExecute()) {
+            // This should not happen when installed via package manager, but try anyway
+            aapt2.setExecutable(true, false)
         }
-        return supported.firstOrNull() ?: "arm64-v8a"
-    }
-
-    /**
-     * Makes a file executable using three escalating strategies:
-     *  1. android.system.Os.chmod (kernel-level, most reliable)
-     *  2. java.io.File.setExecutable (JVM wrapper)
-     *  3. Shell `chmod 755` via ProcessBuilder
-     */
-    private fun makeExecutable(file: File) {
-        // Strategy 1: Os.chmod with rwxr-xr-x (493 decimal = 0755 octal)
-        try {
-            Os.chmod(file.absolutePath, 493)
-        } catch (_: Exception) { }
-
-        if (file.canExecute()) return
-
-        // Strategy 2: Java File API (belt-and-suspenders)
-        file.setExecutable(true, false)
-
-        if (file.canExecute()) return
-
-        // Strategy 3: Shell chmod as last resort
-        try {
-            ProcessBuilder("chmod", "755", file.absolutePath)
-                .redirectErrorStream(true)
-                .start()
-                .waitFor()
-        } catch (_: Exception) { }
+        return aapt2
     }
 
     /**
      * Extracts an asset file to [target].
      *
-     * - If the asset is uncompressed in the APK (noCompress flag): uses openFd() size comparison
-     *   to skip re-extraction when already up-to-date.
-     * - If the asset is compressed: falls back to streaming via open(), skipping only if
-     *   the target already has content (assumes it's up-to-date across reinstalls).
+     * - Uncompressed assets (noCompress flag set): uses openFd() size comparison to skip
+     *   re-extraction when already up-to-date.
+     * - Compressed assets: falls back to streaming via open(), skipping if target has content.
      */
     private fun extractAsset(context: Context, assetPath: String, target: File) {
         try {
-            // Fast path: uncompressed asset in APK - compare sizes
+            // Fast path: uncompressed asset - compare sizes to detect updates
             val fd = context.assets.openFd(assetPath)
             val assetLength = fd.length
             fd.close()
             if (target.exists() && target.length() == assetLength) return
         } catch (_: Exception) {
-            // Compressed asset: can't use openFd(). Skip only if target has content.
+            // Compressed asset: openFd() not available. Skip if target already has content.
             if (target.exists() && target.length() > 0) return
         }
 
