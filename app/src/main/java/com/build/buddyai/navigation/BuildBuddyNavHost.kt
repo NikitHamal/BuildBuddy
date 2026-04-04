@@ -9,6 +9,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.build.buddyai.feature.agent.AgentScreen
 import com.build.buddyai.feature.home.HomeScreen
 import com.build.buddyai.feature.models.ModelsScreen
 import com.build.buddyai.feature.onboarding.OnboardingScreen
@@ -21,10 +22,12 @@ object Routes {
     const val HOME = "home"
     const val CREATE_PROJECT = "create_project"
     const val PLAYGROUND = "playground/{projectId}"
+    const val AGENT = "agent/{projectId}"
     const val SETTINGS = "settings"
     const val MODELS = "models"
 
     fun playground(projectId: String) = "playground/$projectId"
+    fun agent(projectId: String) = "agent/$projectId"
 }
 
 @Composable
@@ -84,6 +87,19 @@ fun BuildBuddyNavHost(
                 projectId = projectId,
                 onBack = { navController.popBackStack() },
                 onNavigateToSettings = { navController.navigate(Routes.SETTINGS) },
+                onNavigateToModels = { navController.navigate(Routes.MODELS) },
+                onNavigateToAgent = { navController.navigate(Routes.agent(projectId)) }
+            )
+        }
+
+        composable(
+            route = Routes.AGENT,
+            arguments = listOf(navArgument("projectId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val projectId = backStackEntry.arguments?.getString("projectId") ?: return@composable
+            AgentScreen(
+                projectId = projectId,
+                onBack = { navController.popBackStack() },
                 onNavigateToModels = { navController.navigate(Routes.MODELS) }
             )
         }

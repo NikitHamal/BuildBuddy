@@ -74,6 +74,7 @@
     <string name="playground_files">Files</string>
     <string name="playground_build">Build</string>
     <string name="playground_artifacts">Artifacts</string>
+    <string name="playground_workspace">Workspace</string>
 
     <!-- Agent -->
     <string name="agent_input_hint">Describe what you want to build…</string>

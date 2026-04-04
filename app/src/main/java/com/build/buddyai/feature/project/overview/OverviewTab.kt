@@ -25,6 +25,7 @@ import java.util.*
 fun OverviewTab(
     projectId: String,
     onNavigateToTab: (PlaygroundTab) -> Unit,
+    onNavigateToAgent: () -> Unit,
     viewModel: OverviewViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -113,15 +114,15 @@ fun OverviewTab(
             ) {
                 OverviewActionCard(
                     icon = Icons.Filled.Psychology,
-                    label = stringResource(R.string.playground_agent),
+                    label = "AI Agent",
                     modifier = Modifier.weight(1f),
-                    onClick = { onNavigateToTab(PlaygroundTab.AGENT) }
+                    onClick = onNavigateToAgent
                 )
                 OverviewActionCard(
                     icon = Icons.Filled.Code,
-                    label = stringResource(R.string.playground_editor),
+                    label = "Workspace",
                     modifier = Modifier.weight(1f),
-                    onClick = { onNavigateToTab(PlaygroundTab.EDITOR) }
+                    onClick = { onNavigateToTab(PlaygroundTab.WORKSPACE) }
                 )
             }
         }
@@ -131,16 +132,10 @@ fun OverviewTab(
                 horizontalArrangement = Arrangement.spacedBy(NvSpacing.Sm)
             ) {
                 OverviewActionCard(
-                    icon = Icons.Filled.Folder,
-                    label = stringResource(R.string.playground_files),
+                    icon = Icons.Filled.Build,
+                    label = stringResource(R.string.playground_build),
                     modifier = Modifier.weight(1f),
-                    onClick = { onNavigateToTab(PlaygroundTab.FILES) }
-                )
-                OverviewActionCard(
-                    icon = Icons.Filled.Inventory2,
-                    label = stringResource(R.string.playground_artifacts),
-                    modifier = Modifier.weight(1f),
-                    onClick = { onNavigateToTab(PlaygroundTab.ARTIFACTS) }
+                    onClick = { onNavigateToTab(PlaygroundTab.BUILD) }
                 )
             }
         }

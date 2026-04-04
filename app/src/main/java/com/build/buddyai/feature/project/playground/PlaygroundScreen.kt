@@ -13,20 +13,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.build.buddyai.R
 import com.build.buddyai.core.designsystem.component.*
 import com.build.buddyai.core.designsystem.theme.*
-import com.build.buddyai.feature.agent.AgentTab
-import com.build.buddyai.feature.artifacts.ArtifactsTab
-import com.build.buddyai.feature.build.BuildTab
-import com.build.buddyai.feature.editor.EditorTab
-import com.build.buddyai.feature.files.FilesTab
+import com.build.buddyai.feature.build.BuildWorkspaceScreen
+import com.build.buddyai.feature.editor.WorkspaceScreen
 import com.build.buddyai.feature.project.overview.OverviewTab
 
 enum class PlaygroundTab(val titleRes: Int, val icon: @Composable () -> Unit) {
     OVERVIEW(R.string.playground_overview, { Icon(Icons.Filled.Dashboard, contentDescription = null) }),
-    AGENT(R.string.playground_agent, { Icon(Icons.Filled.Psychology, contentDescription = null) }),
-    EDITOR(R.string.playground_editor, { Icon(Icons.Filled.Code, contentDescription = null) }),
-    FILES(R.string.playground_files, { Icon(Icons.Filled.Folder, contentDescription = null) }),
-    BUILD(R.string.playground_build, { Icon(Icons.Filled.Build, contentDescription = null) }),
-    ARTIFACTS(R.string.playground_artifacts, { Icon(Icons.Filled.Inventory2, contentDescription = null) })
+    WORKSPACE(R.string.playground_workspace, { Icon(Icons.Filled.Code, contentDescription = null) }),
+    BUILD(R.string.playground_build, { Icon(Icons.Filled.Build, contentDescription = null) })
 }
 
 @Composable
@@ -35,6 +29,7 @@ fun PlaygroundScreen(
     onBack: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToModels: () -> Unit,
+    onNavigateToAgent: () -> Unit,
     viewModel: PlaygroundViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -51,8 +46,11 @@ fun PlaygroundScreen(
                 subtitle = uiState.project?.packageName,
                 navigationIcon = { NvBackButton(onBack) },
                 actions = {
+                    IconButton(onClick = onNavigateToAgent) {
+                        Icon(Icons.Filled.Psychology, contentDescription = "AI Agent")
+                    }
                     IconButton(onClick = onNavigateToModels) {
-                        Icon(Icons.Filled.Psychology, contentDescription = null)
+                        Icon(Icons.Filled.Settings, contentDescription = null)
                     }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = null)
@@ -91,25 +89,14 @@ fun PlaygroundScreen(
                 when (tab) {
                     PlaygroundTab.OVERVIEW -> OverviewTab(
                         projectId = projectId,
-                        onNavigateToTab = { selectedTab = it }
+                        onNavigateToTab = { selectedTab = it },
+                        onNavigateToAgent = onNavigateToAgent
                     )
-                    PlaygroundTab.AGENT -> AgentTab(
+                    PlaygroundTab.WORKSPACE -> WorkspaceScreen(projectId = projectId)
+                    PlaygroundTab.BUILD -> BuildWorkspaceScreen(
                         projectId = projectId,
-                        onNavigateToModels = onNavigateToModels
+                        onNavigateToAgent = onNavigateToAgent
                     )
-                    PlaygroundTab.EDITOR -> EditorTab(projectId = projectId)
-                    PlaygroundTab.FILES -> FilesTab(
-                        projectId = projectId,
-                        onOpenFile = { path ->
-                            viewModel.openFile(path)
-                            selectedTab = PlaygroundTab.EDITOR
-                        }
-                    )
-                    PlaygroundTab.BUILD -> BuildTab(
-                        projectId = projectId,
-                        onBuildComplete = { selectedTab = PlaygroundTab.ARTIFACTS }
-                    )
-                    PlaygroundTab.ARTIFACTS -> ArtifactsTab(projectId = projectId)
                 }
             }
         }

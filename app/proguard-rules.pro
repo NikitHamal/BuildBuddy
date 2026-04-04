@@ -40,3 +40,18 @@
 -keepclassmembers class kotlinx.coroutines.** {
     volatile <fields>;
 }
+
+# Keep model classes for serialization
+-keep class com.build.buddyai.core.model.** { *; }
+-keep class com.build.buddyai.core.network.** { *; }
+
+# Keep Google Fonts provider
+-keep class androidx.compose.ui.text.googlefonts.** { *; }
+
+# Keep Errorprone annotations (for Tink)
+-keep class com.google.errorprone.annotations.** { *; }
+-dontwarn com.google.errorprone.annotations.**
+
+# Keep Tink
+-keep class com.google.crypto.tink.** { *; }
+-dontwarn com.google.crypto.tink.**
