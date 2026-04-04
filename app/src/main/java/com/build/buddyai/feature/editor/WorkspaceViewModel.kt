@@ -14,18 +14,20 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 
 data class WorkspaceUiState(
-    // File tree
     val fileTree: FileNode? = null,
     val isLoading: Boolean = true,
     val expandedPaths: Set<String> = setOf(""),
-    // Editor
     val openFiles: List<OpenFile> = emptyList(),
     val activeFileIndex: Int = -1,
     val fontSize: Int = 14,
@@ -39,6 +41,11 @@ data class WorkspaceUiState(
     val activeFile: OpenFile? get() = openFiles.getOrNull(activeFileIndex)
 }
 
+private data class WorkspaceFileHistory(
+    val undo: List<String> = emptyList(),
+    val redo: List<String> = emptyList()
+)
+
 @HiltViewModel
 class WorkspaceViewModel @Inject constructor(
     private val projectRepository: ProjectRepository,
@@ -51,6 +58,7 @@ class WorkspaceViewModel @Inject constructor(
 
     private var currentProjectId: String? = null
     private var autosaveJob: Job? = null
+    private val historyByPath = linkedMapOf<String, WorkspaceFileHistory>()
 
     init {
         viewModelScope.launch {
@@ -73,88 +81,88 @@ class WorkspaceViewModel @Inject constructor(
         loadFiles(projectId)
     }
 
-    // File Tree Functions
     private fun loadFiles(projectId: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            withContext(Dispatchers.IO) {
-                val project = projectRepository.getProjectById(projectId)
-                if (project != null) {
-                    val projectDir = File(project.projectPath)
-                    if (projectDir.exists()) {
-                        val tree = FileUtils.buildFileTree(projectDir)
-                        _uiState.update { it.copy(fileTree = tree, isLoading = false) }
-                    } else {
-                        _uiState.update { it.copy(fileTree = null, isLoading = false) }
-                    }
-                }
+            val tree = withContext(Dispatchers.IO) {
+                val project = projectRepository.getProjectById(projectId) ?: return@withContext null
+                val projectDir = File(project.projectPath)
+                if (projectDir.exists()) FileUtils.buildFileTree(projectDir) else null
             }
+            _uiState.update { it.copy(fileTree = tree, isLoading = false) }
         }
     }
 
     fun refreshFiles() {
-        currentProjectId?.let { loadFiles(it) }
+        currentProjectId?.let(::loadFiles)
     }
 
     fun toggleExpand(path: String) {
         _uiState.update {
-            val paths = it.expandedPaths.toMutableSet()
-            if (paths.contains(path)) paths.remove(path) else paths.add(path)
-            it.copy(expandedPaths = paths)
+            val updated = it.expandedPaths.toMutableSet()
+            if (!updated.add(path)) updated.remove(path)
+            it.copy(expandedPaths = updated)
         }
     }
 
     fun createFile(name: String) {
+        val normalized = try { FileUtils.normalizeRelativePath(name) } catch (_: IllegalArgumentException) { return }
         viewModelScope.launch(Dispatchers.IO) {
             val project = currentProjectId?.let { projectRepository.getProjectById(it) } ?: return@launch
-            FileUtils.createFile(File(project.projectPath), "app/src/main/java/$name")
+            FileUtils.createFile(File(project.projectPath), normalized)
             refreshFiles()
         }
     }
 
     fun createFolder(name: String) {
+        val normalized = try { FileUtils.normalizeRelativePath(name) } catch (_: IllegalArgumentException) { return }
         viewModelScope.launch(Dispatchers.IO) {
             val project = currentProjectId?.let { projectRepository.getProjectById(it) } ?: return@launch
-            FileUtils.createDirectory(File(project.projectPath), name)
+            FileUtils.createDirectory(File(project.projectPath), normalized)
             refreshFiles()
         }
     }
 
     fun deleteFile(path: String) {
+        val normalized = try { FileUtils.normalizeRelativePath(path) } catch (_: IllegalArgumentException) { return }
         viewModelScope.launch(Dispatchers.IO) {
             val project = currentProjectId?.let { projectRepository.getProjectById(it) } ?: return@launch
-            FileUtils.deleteFileOrDir(File(project.projectPath), path)
+            FileUtils.deleteFileOrDir(File(project.projectPath), normalized)
+            historyByPath.remove(normalized)
             refreshFiles()
         }
     }
 
-    // Editor Functions
     fun openFile(relativePath: String) {
-        val existing = _uiState.value.openFiles.indexOfFirst { it.path == relativePath }
+        val normalized = try { FileUtils.normalizeRelativePath(relativePath) } catch (_: IllegalArgumentException) { return }
+        val existing = _uiState.value.openFiles.indexOfFirst { it.path == normalized }
         if (existing >= 0) {
             _uiState.update { it.copy(activeFileIndex = existing) }
+            syncHistoryUi(normalized)
             return
         }
 
         viewModelScope.launch {
             val projectId = currentProjectId ?: return@launch
             val project = projectRepository.getProjectById(projectId) ?: return@launch
-            val content = FileUtils.readFileContent(File(project.projectPath), relativePath) ?: return@launch
-            val name = relativePath.substringAfterLast("/")
-            val fileType = FileType.fromExtension(name.substringAfterLast(".", ""))
-            val openFile = OpenFile(path = relativePath, name = name, content = content, fileType = fileType)
+            val content = FileUtils.readFileContent(File(project.projectPath), normalized) ?: return@launch
+            val name = normalized.substringAfterLast('/')
+            val fileType = FileType.fromExtension(name.substringAfterLast('.', ""))
+            val openFile = OpenFile(path = normalized, name = name, content = content, fileType = fileType)
+            historyByPath.putIfAbsent(normalized, WorkspaceFileHistory())
             _uiState.update {
                 val files = it.openFiles + openFile
-                it.copy(openFiles = files, activeFileIndex = files.size - 1, undoStack = emptyList(), redoStack = emptyList())
+                it.copy(openFiles = files, activeFileIndex = files.size - 1)
             }
+            syncHistoryUi(normalized)
         }
     }
 
     fun closeFile(index: Int) {
         val state = _uiState.value
-        if (state.openFiles[index].isModified) {
-            saveFile(index)
-        }
+        if (index !in state.openFiles.indices) return
+        if (state.openFiles[index].isModified) saveFile(index)
+        val removedPath = state.openFiles[index].path
         _uiState.update {
             val files = it.openFiles.toMutableList().apply { removeAt(index) }
             val newIndex = when {
@@ -164,25 +172,29 @@ class WorkspaceViewModel @Inject constructor(
             }
             it.copy(openFiles = files, activeFileIndex = newIndex)
         }
+        historyByPath.remove(removedPath)
+        _uiState.value.activeFile?.path?.let(::syncHistoryUi)
     }
 
-    fun setActiveFile(index: Int) = _uiState.update { it.copy(activeFileIndex = index) }
+    fun setActiveFile(index: Int) {
+        _uiState.update { it.copy(activeFileIndex = index) }
+        _uiState.value.activeFile?.path?.let(::syncHistoryUi)
+    }
 
     fun updateFileContent(content: String) {
         val state = _uiState.value
         val index = state.activeFileIndex
-        if (index < 0 || index >= state.openFiles.size) return
+        if (index !in state.openFiles.indices) return
+        val current = state.openFiles[index]
+        val history = historyByPath[current.path] ?: WorkspaceFileHistory()
+        historyByPath[current.path] = history.copy(undo = history.undo + current.content, redo = emptyList())
 
-        val currentContent = state.openFiles[index].content
         _uiState.update {
             val files = it.openFiles.toMutableList()
             files[index] = files[index].copy(content = content, isModified = true)
-            it.copy(
-                openFiles = files,
-                undoStack = it.undoStack + currentContent,
-                redoStack = emptyList()
-            )
+            it.copy(openFiles = files)
         }
+        syncHistoryUi(current.path)
 
         if (_uiState.value.autosave) {
             autosaveJob?.cancel()
@@ -195,7 +207,7 @@ class WorkspaceViewModel @Inject constructor(
 
     fun saveFile(index: Int = _uiState.value.activeFileIndex) {
         val state = _uiState.value
-        if (index < 0 || index >= state.openFiles.size) return
+        if (index !in state.openFiles.indices) return
         val file = state.openFiles[index]
         if (!file.isModified) return
 
@@ -212,34 +224,37 @@ class WorkspaceViewModel @Inject constructor(
     }
 
     fun undo() {
-        val state = _uiState.value
-        if (state.undoStack.isEmpty() || state.activeFileIndex < 0) return
-        val previousContent = state.undoStack.last()
-        val currentContent = state.openFiles[state.activeFileIndex].content
-        _uiState.update {
-            val files = it.openFiles.toMutableList()
-            files[state.activeFileIndex] = files[state.activeFileIndex].copy(content = previousContent, isModified = true)
-            it.copy(
-                openFiles = files,
-                undoStack = it.undoStack.dropLast(1),
-                redoStack = it.redoStack + currentContent
-            )
-        }
+        val active = _uiState.value.activeFile ?: return
+        val history = historyByPath[active.path] ?: return
+        if (history.undo.isEmpty()) return
+        val previous = history.undo.last()
+        historyByPath[active.path] = history.copy(undo = history.undo.dropLast(1), redo = history.redo + active.content)
+        replaceActiveFileContent(previous)
+        syncHistoryUi(active.path)
     }
 
     fun redo() {
-        val state = _uiState.value
-        if (state.redoStack.isEmpty() || state.activeFileIndex < 0) return
-        val nextContent = state.redoStack.last()
-        val currentContent = state.openFiles[state.activeFileIndex].content
+        val active = _uiState.value.activeFile ?: return
+        val history = historyByPath[active.path] ?: return
+        if (history.redo.isEmpty()) return
+        val next = history.redo.last()
+        historyByPath[active.path] = history.copy(undo = history.undo + active.content, redo = history.redo.dropLast(1))
+        replaceActiveFileContent(next)
+        syncHistoryUi(active.path)
+    }
+
+    private fun replaceActiveFileContent(content: String) {
+        val index = _uiState.value.activeFileIndex
+        if (index !in _uiState.value.openFiles.indices) return
         _uiState.update {
             val files = it.openFiles.toMutableList()
-            files[state.activeFileIndex] = files[state.activeFileIndex].copy(content = nextContent, isModified = true)
-            it.copy(
-                openFiles = files,
-                undoStack = it.undoStack + currentContent,
-                redoStack = it.redoStack.dropLast(1)
-            )
+            files[index] = files[index].copy(content = content, isModified = true)
+            it.copy(openFiles = files)
         }
+    }
+
+    private fun syncHistoryUi(path: String) {
+        val history = historyByPath[path] ?: WorkspaceFileHistory()
+        _uiState.update { it.copy(undoStack = history.undo, redoStack = history.redo) }
     }
 }

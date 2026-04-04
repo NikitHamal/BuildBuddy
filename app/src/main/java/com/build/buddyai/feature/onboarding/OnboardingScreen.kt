@@ -17,6 +17,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.build.buddyai.R
+import com.build.buddyai.core.common.BuildBuddyAppIcon
 import com.build.buddyai.core.designsystem.component.NvFilledButton
 import com.build.buddyai.core.designsystem.component.NvTextButton
 import com.build.buddyai.core.designsystem.theme.NvSpacing
@@ -145,19 +146,23 @@ private fun OnboardingPageContent(page: OnboardingPage) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Surface(
-            modifier = Modifier.size(80.dp),
-            shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.primaryContainer
-        ) {
-            Icon(
-                imageVector = page.icon,
-                contentDescription = null,
-                modifier = Modifier
-                    .padding(NvSpacing.Lg)
-                    .fillMaxSize(),
-                tint = MaterialTheme.colorScheme.onPrimaryContainer
-            )
+        if (page.titleRes == R.string.onboarding_welcome_title) {
+            BuildBuddyAppIcon(modifier = Modifier.size(88.dp))
+        } else {
+            Surface(
+                modifier = Modifier.size(80.dp),
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Icon(
+                    imageVector = page.icon,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .padding(NvSpacing.Lg)
+                        .fillMaxSize(),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
         }
 
         Spacer(Modifier.height(NvSpacing.Xxl))

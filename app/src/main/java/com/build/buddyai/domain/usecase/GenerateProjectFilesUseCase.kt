@@ -376,9 +376,10 @@ android.nonTransitiveRClass=true
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
         android:theme="@style/Theme.Material3.DayNight.NoActionBar">
 
         <activity

@@ -30,13 +30,18 @@ class ArtifactRepository @Inject constructor(
 
     suspend fun deleteArtifact(artifact: BuildArtifact) {
         withContext(Dispatchers.IO) {
-            File(artifact.filePath).delete()
+            File(artifact.filePath).takeIf { it.exists() }?.delete()
             artifactDao.deleteArtifact(ArtifactEntity.fromArtifact(artifact))
         }
     }
 
     suspend fun deleteArtifactsByProject(projectId: String) {
-        artifactDao.deleteArtifactsByProject(projectId)
+        withContext(Dispatchers.IO) {
+            artifactDao.getArtifactsByProjectNow(projectId)
+                .map { it.toArtifact() }
+                .forEach { artifact -> File(artifact.filePath).takeIf { it.exists() }?.delete() }
+            artifactDao.deleteArtifactsByProject(projectId)
+        }
     }
 
     fun getArtifactFile(artifact: BuildArtifact): File = File(artifact.filePath)

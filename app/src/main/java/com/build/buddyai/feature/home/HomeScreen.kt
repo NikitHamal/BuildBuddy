@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.build.buddyai.R
+import com.build.buddyai.core.common.BuildBuddyAppIcon
 import com.build.buddyai.core.designsystem.component.*
 import com.build.buddyai.core.designsystem.theme.*
 import com.build.buddyai.core.model.BuildStatus
@@ -42,6 +43,7 @@ fun HomeScreen(
         topBar = {
             NvTopBar(
                 title = stringResource(R.string.home_title),
+                navigationIcon = { BuildBuddyAppIcon(modifier = Modifier.size(36.dp)) },
                 actions = {
                     IconButton(onClick = onNavigateToModels) {
                         Icon(Icons.Filled.Psychology, contentDescription = stringResource(R.string.models_title))

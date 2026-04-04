@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -18,6 +19,7 @@ import com.build.buddyai.R
 import com.build.buddyai.core.designsystem.component.*
 import com.build.buddyai.core.designsystem.theme.*
 import com.build.buddyai.core.model.ThemeMode
+import kotlinx.coroutines.flow.collect
 
 @Composable
 fun SettingsScreen(
@@ -28,11 +30,20 @@ fun SettingsScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
     LaunchedEffect(uiState.lastOperationMessage) {
         if (uiState.lastOperationMessage != null) {
             snackbarHostState.showSnackbar(uiState.lastOperationMessage!!)
             viewModel.clearOperationMessage()
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is SettingsEvent.LaunchIntent -> context.startActivity(event.intent)
+            }
         }
     }
 

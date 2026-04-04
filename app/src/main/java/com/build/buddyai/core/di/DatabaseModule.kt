@@ -4,7 +4,11 @@ import android.content.Context
 import androidx.room.Room
 import com.build.buddyai.core.data.local.BuildBuddyDatabase
 import com.build.buddyai.core.data.local.MIGRATION_1_2
-import com.build.buddyai.core.data.local.dao.*
+import com.build.buddyai.core.data.local.dao.ArtifactDao
+import com.build.buddyai.core.data.local.dao.BuildRecordDao
+import com.build.buddyai.core.data.local.dao.ChatDao
+import com.build.buddyai.core.data.local.dao.ProjectDao
+import com.build.buddyai.core.data.local.dao.ProviderConfigDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -24,9 +28,8 @@ object DatabaseModule {
             BuildBuddyDatabase::class.java,
             "buildbuddy.db"
         )
-        .addMigrations(MIGRATION_1_2)
-        .fallbackToDestructiveMigration()
-        .build()
+            .addMigrations(MIGRATION_1_2)
+            .build()
     }
 
     @Provides fun provideProjectDao(db: BuildBuddyDatabase): ProjectDao = db.projectDao()

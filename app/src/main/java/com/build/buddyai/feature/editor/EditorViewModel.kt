@@ -12,7 +12,11 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
@@ -36,6 +40,11 @@ data class EditorUiState(
     val activeFile: OpenFile? get() = openFiles.getOrNull(activeFileIndex)
 }
 
+private data class FileHistory(
+    val undo: List<String> = emptyList(),
+    val redo: List<String> = emptyList()
+)
+
 @HiltViewModel
 class EditorViewModel @Inject constructor(
     private val projectRepository: ProjectRepository,
@@ -48,6 +57,7 @@ class EditorViewModel @Inject constructor(
 
     private var currentProjectId: String? = null
     private var autosaveJob: Job? = null
+    private val historyByPath = linkedMapOf<String, FileHistory>()
 
     init {
         viewModelScope.launch {
@@ -71,30 +81,33 @@ class EditorViewModel @Inject constructor(
 
     fun openFile(projectId: String, relativePath: String) {
         currentProjectId = projectId
-        val existing = _uiState.value.openFiles.indexOfFirst { it.path == relativePath }
+        val normalized = try { FileUtils.normalizeRelativePath(relativePath) } catch (_: IllegalArgumentException) { return }
+        val existing = _uiState.value.openFiles.indexOfFirst { it.path == normalized }
         if (existing >= 0) {
             _uiState.update { it.copy(activeFileIndex = existing) }
+            syncHistoryUi(normalized)
             return
         }
 
         viewModelScope.launch {
             val project = projectRepository.getProjectById(projectId) ?: return@launch
-            val content = FileUtils.readFileContent(File(project.projectPath), relativePath) ?: return@launch
-            val name = relativePath.substringAfterLast("/")
-            val fileType = FileType.fromExtension(name.substringAfterLast(".", ""))
-            val openFile = OpenFile(path = relativePath, name = name, content = content, fileType = fileType)
+            val content = FileUtils.readFileContent(File(project.projectPath), normalized) ?: return@launch
+            val name = normalized.substringAfterLast('/')
+            val fileType = FileType.fromExtension(name.substringAfterLast('.', ""))
+            val openFile = OpenFile(path = normalized, name = name, content = content, fileType = fileType)
+            historyByPath.putIfAbsent(normalized, FileHistory())
             _uiState.update {
                 val files = it.openFiles + openFile
-                it.copy(openFiles = files, activeFileIndex = files.size - 1, undoStack = emptyList(), redoStack = emptyList())
+                it.copy(openFiles = files, activeFileIndex = files.size - 1)
             }
+            syncHistoryUi(normalized)
         }
     }
 
     fun closeFile(index: Int) {
         val state = _uiState.value
-        if (state.openFiles[index].isModified) {
-            saveFile(index)
-        }
+        if (index !in state.openFiles.indices) return
+        if (state.openFiles[index].isModified) saveFile(index)
         _uiState.update {
             val files = it.openFiles.toMutableList().apply { removeAt(index) }
             val newIndex = when {
@@ -104,25 +117,30 @@ class EditorViewModel @Inject constructor(
             }
             it.copy(openFiles = files, activeFileIndex = newIndex)
         }
+        state.openFiles.getOrNull(index)?.path?.let { historyByPath.remove(it) }
+        _uiState.value.activeFile?.path?.let(::syncHistoryUi)
     }
 
-    fun setActiveFile(index: Int) = _uiState.update { it.copy(activeFileIndex = index) }
+    fun setActiveFile(index: Int) {
+        _uiState.update { it.copy(activeFileIndex = index) }
+        _uiState.value.activeFile?.path?.let(::syncHistoryUi)
+    }
 
     fun updateFileContent(content: String) {
         val state = _uiState.value
         val index = state.activeFileIndex
-        if (index < 0 || index >= state.openFiles.size) return
+        if (index !in state.openFiles.indices) return
 
-        val currentContent = state.openFiles[index].content
+        val current = state.openFiles[index]
+        val history = historyByPath[current.path] ?: FileHistory()
+        historyByPath[current.path] = history.copy(undo = history.undo + current.content, redo = emptyList())
+
         _uiState.update {
             val files = it.openFiles.toMutableList()
             files[index] = files[index].copy(content = content, isModified = true)
-            it.copy(
-                openFiles = files,
-                undoStack = it.undoStack + currentContent,
-                redoStack = emptyList()
-            )
+            it.copy(openFiles = files)
         }
+        syncHistoryUi(current.path)
 
         if (_uiState.value.autosave) {
             autosaveJob?.cancel()
@@ -135,7 +153,7 @@ class EditorViewModel @Inject constructor(
 
     fun saveFile(index: Int = _uiState.value.activeFileIndex) {
         val state = _uiState.value
-        if (index < 0 || index >= state.openFiles.size) return
+        if (index !in state.openFiles.indices) return
         val file = state.openFiles[index]
         if (!file.isModified) return
 
@@ -151,38 +169,33 @@ class EditorViewModel @Inject constructor(
     }
 
     fun undo() {
-        val state = _uiState.value
-        if (state.undoStack.isEmpty() || state.activeFileIndex < 0) return
-        val previousContent = state.undoStack.last()
-        val currentContent = state.openFiles[state.activeFileIndex].content
-        _uiState.update {
-            val files = it.openFiles.toMutableList()
-            files[state.activeFileIndex] = files[state.activeFileIndex].copy(content = previousContent, isModified = true)
-            it.copy(
-                openFiles = files,
-                undoStack = it.undoStack.dropLast(1),
-                redoStack = it.redoStack + currentContent
-            )
-        }
+        val active = _uiState.value.activeFile ?: return
+        val history = historyByPath[active.path] ?: return
+        if (history.undo.isEmpty()) return
+        val previous = history.undo.last()
+        historyByPath[active.path] = history.copy(
+            undo = history.undo.dropLast(1),
+            redo = history.redo + active.content
+        )
+        replaceActiveFileContent(previous)
+        syncHistoryUi(active.path)
     }
 
     fun redo() {
-        val state = _uiState.value
-        if (state.redoStack.isEmpty() || state.activeFileIndex < 0) return
-        val nextContent = state.redoStack.last()
-        val currentContent = state.openFiles[state.activeFileIndex].content
-        _uiState.update {
-            val files = it.openFiles.toMutableList()
-            files[state.activeFileIndex] = files[state.activeFileIndex].copy(content = nextContent, isModified = true)
-            it.copy(
-                openFiles = files,
-                undoStack = it.undoStack + currentContent,
-                redoStack = it.redoStack.dropLast(1)
-            )
-        }
+        val active = _uiState.value.activeFile ?: return
+        val history = historyByPath[active.path] ?: return
+        if (history.redo.isEmpty()) return
+        val next = history.redo.last()
+        historyByPath[active.path] = history.copy(
+            undo = history.undo + active.content,
+            redo = history.redo.dropLast(1)
+        )
+        replaceActiveFileContent(next)
+        syncHistoryUi(active.path)
     }
 
     fun toggleSearch() = _uiState.update { it.copy(showSearch = !it.showSearch) }
+
     fun updateSearchQuery(query: String) {
         _uiState.update {
             val results = if (query.isNotEmpty()) {
@@ -194,7 +207,9 @@ class EditorViewModel @Inject constructor(
                     index = content.indexOf(query, index + 1, ignoreCase = true)
                 }
                 indices
-            } else emptyList()
+            } else {
+                emptyList()
+            }
             it.copy(searchQuery = query, searchResults = results, currentSearchIndex = if (results.isNotEmpty()) 0 else -1)
         }
     }
@@ -203,8 +218,23 @@ class EditorViewModel @Inject constructor(
 
     fun replaceAll() {
         val state = _uiState.value
-        if (state.searchQuery.isEmpty() || state.activeFile == null) return
-        val newContent = state.activeFile!!.content.replace(state.searchQuery, state.replaceQuery, ignoreCase = true)
-        updateFileContent(newContent)
+        val active = state.activeFile ?: return
+        if (state.searchQuery.isEmpty()) return
+        updateFileContent(active.content.replace(state.searchQuery, state.replaceQuery, ignoreCase = true))
+    }
+
+    private fun replaceActiveFileContent(content: String) {
+        val index = _uiState.value.activeFileIndex
+        if (index !in _uiState.value.openFiles.indices) return
+        _uiState.update {
+            val files = it.openFiles.toMutableList()
+            files[index] = files[index].copy(content = content, isModified = true)
+            it.copy(openFiles = files)
+        }
+    }
+
+    private fun syncHistoryUi(path: String) {
+        val history = historyByPath[path] ?: FileHistory()
+        _uiState.update { it.copy(undoStack = history.undo, redoStack = history.redo) }
     }
 }

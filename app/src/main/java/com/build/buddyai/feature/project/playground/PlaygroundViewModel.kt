@@ -5,7 +5,12 @@ import androidx.lifecycle.viewModelScope
 import com.build.buddyai.core.data.repository.ProjectRepository
 import com.build.buddyai.core.model.Project
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -23,8 +28,11 @@ class PlaygroundViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(PlaygroundUiState())
     val uiState: StateFlow<PlaygroundUiState> = _uiState.asStateFlow()
 
+    private var observeJob: Job? = null
+
     fun loadProject(projectId: String) {
-        viewModelScope.launch {
+        observeJob?.cancel()
+        observeJob = viewModelScope.launch {
             projectRepository.observeProject(projectId).collect { project ->
                 _uiState.update { it.copy(project = project, isLoading = false) }
             }

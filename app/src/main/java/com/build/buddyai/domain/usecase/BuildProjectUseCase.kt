@@ -1,25 +1,26 @@
 package com.build.buddyai.domain.usecase
 
 import android.content.Context
+import com.build.buddyai.core.common.BuildCancellationRegistry
 import com.build.buddyai.core.common.FileUtils
 import com.build.buddyai.core.model.BuildLogEntry
 import com.build.buddyai.core.model.LogLevel
 import com.build.buddyai.core.model.Project
-import com.build.buddyai.core.model.ProjectLanguage
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.coroutineContext
 
 @Singleton
 class BuildProjectUseCase @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val buildCancellationRegistry: BuildCancellationRegistry
 ) {
     sealed class BuildEvent {
         data class Progress(val progress: Float, val message: String) : BuildEvent()
@@ -27,6 +28,7 @@ class BuildProjectUseCase @Inject constructor(
         data class Warning(val message: String) : BuildEvent()
         data class Success(val artifactPath: String, val artifactSize: Long) : BuildEvent()
         data class Failure(val error: String) : BuildEvent()
+        data class Cancelled(val message: String = "Build cancelled") : BuildEvent()
     }
 
     suspend operator fun invoke(
@@ -34,267 +36,137 @@ class BuildProjectUseCase @Inject constructor(
         buildId: String,
         onEvent: suspend (BuildEvent) -> Unit
     ) = withContext(Dispatchers.IO) {
+        val projectDir = File(project.projectPath)
+        if (!projectDir.exists()) {
+            onEvent(BuildEvent.Failure("Project directory not found"))
+            return@withContext
+        }
+
         try {
-            val projectDir = File(project.projectPath)
-            if (!projectDir.exists()) {
-                onEvent(BuildEvent.Failure("Project directory not found"))
-                return@withContext
-            }
+            onEvent(BuildEvent.Progress(0.05f, "Validating real build environment…"))
+            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Starting real Gradle build for ${project.name}")))
+            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Project path: ${project.projectPath}")))
 
-            // Phase 1: Validation (0-15%)
-            onEvent(BuildEvent.Progress(0.05f, "Validating project structure…"))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Starting build for ${project.name}")))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Project: ${project.packageName}")))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Language: ${project.language.displayName}")))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Template: ${project.template.displayName}")))
-            delay(300)
-
-            val validationResult = validateProject(projectDir, project)
-            if (validationResult.errors.isNotEmpty()) {
-                validationResult.errors.forEach { error ->
-                    onEvent(BuildEvent.Log(logEntry(LogLevel.ERROR, error)))
-                }
-                onEvent(BuildEvent.Failure(validationResult.errors.joinToString("\n")))
-                return@withContext
-            }
-            validationResult.warnings.forEach { warning ->
-                onEvent(BuildEvent.Warning(warning))
-                onEvent(BuildEvent.Log(logEntry(LogLevel.WARNING, warning)))
-            }
-            onEvent(BuildEvent.Progress(0.15f, "Validation complete"))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Project validation passed")))
-
-            // Phase 2: Source processing (15-35%)
-            onEvent(BuildEvent.Progress(0.20f, "Processing sources…"))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Collecting source files…")))
-            delay(200)
-
-            val sourceFiles = collectSourceFiles(projectDir, project)
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Found ${sourceFiles.size} source file(s)")))
-            sourceFiles.forEach { file ->
-                onEvent(BuildEvent.Log(logEntry(LogLevel.DEBUG, "  ${file.toRelativeString(projectDir)}")))
-            }
-            onEvent(BuildEvent.Progress(0.35f, "Sources processed"))
-
-            // Phase 3: Resource processing (35-50%)
-            onEvent(BuildEvent.Progress(0.40f, "Processing resources…"))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Processing resource files…")))
-            delay(200)
-
-            val resourceFiles = collectResourceFiles(projectDir)
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Found ${resourceFiles.size} resource file(s)")))
-            onEvent(BuildEvent.Progress(0.50f, "Resources processed"))
-
-            // Phase 4: Compilation simulation (50-70%)
-            onEvent(BuildEvent.Progress(0.55f, "Compiling sources…"))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Compiling ${project.language.displayName} sources…")))
-            delay(500)
-
-            // Validate source file syntax (basic check)
-            sourceFiles.forEach { file ->
-                val content = file.readText()
-                val syntaxCheck = basicSyntaxCheck(file, content, project)
-                if (syntaxCheck != null) {
-                    onEvent(BuildEvent.Log(logEntry(LogLevel.ERROR, syntaxCheck)))
-                    onEvent(BuildEvent.Failure("Compilation failed: $syntaxCheck"))
+            val wrapperScript = resolveGradleWrapper(projectDir)
+                ?: run {
+                    onEvent(BuildEvent.Failure("Gradle wrapper not found. BuildBuddy now performs real Gradle builds only and will not fabricate APKs. Add gradlew/gradlew.bat and the wrapper files to the project root."))
                     return@withContext
                 }
+            val wrapperJar = findGradleWrapperJar(projectDir)
+                ?: run {
+                    onEvent(BuildEvent.Failure("Gradle wrapper JAR is missing. Real builds require gradle/wrapper/gradle-wrapper.jar."))
+                    return@withContext
+                }
+
+            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Using wrapper script: ${wrapperScript.name}")))
+            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Using wrapper runtime: ${wrapperJar.relativeTo(projectDir).invariantSeparatorsPath}")))
+            onEvent(BuildEvent.Progress(0.15f, "Launching Gradle assembleDebug…"))
+
+            val process = ProcessBuilder(buildCommand(wrapperScript))
+                .directory(projectDir)
+                .redirectErrorStream(true)
+                .start()
+            buildCancellationRegistry.register(buildId, process)
+
+            process.inputStream.bufferedReader().use { reader ->
+                while (true) {
+                    if (buildCancellationRegistry.isCancelled(buildId) || !coroutineContext.isActive) {
+                        process.destroyForcibly()
+                        break
+                    }
+                    val line = reader.readLine() ?: break
+                    onEvent(BuildEvent.Log(logEntry(classifyLogLevel(line), line)))
+                    emitProgressFromLog(line, onEvent)
+                }
             }
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Compilation successful")))
-            onEvent(BuildEvent.Progress(0.70f, "Compilation complete"))
 
-            // Phase 5: DEX conversion (70-80%)
-            onEvent(BuildEvent.Progress(0.75f, "Converting to DEX format…"))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Converting compiled classes to DEX…")))
-            delay(300)
-            onEvent(BuildEvent.Progress(0.80f, "DEX conversion complete"))
+            val exitCode = process.waitFor()
+            val wasCancelled = buildCancellationRegistry.isCancelled(buildId) || !coroutineContext.isActive
+            buildCancellationRegistry.unregister(buildId)
 
-            // Phase 6: Packaging (80-90%)
-            onEvent(BuildEvent.Progress(0.85f, "Packaging APK…"))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Assembling APK package…")))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.WARNING, "Note: On-device APK assembly is currently simulated.")))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.WARNING, "Full Gradle compilation requires a local toolchain (aapt2, d8, kotlinc).")))
+            if (wasCancelled) {
+                onEvent(BuildEvent.Cancelled())
+                return@withContext
+            }
 
-            val artifactsDir = FileUtils.getArtifactsDir(context)
-            val artifactFile = File(artifactsDir, "${project.name.replace(" ", "_")}_${buildId.take(8)}.apk")
-            packageApk(projectDir, sourceFiles, resourceFiles, artifactFile, project)
+            if (exitCode != 0) {
+                onEvent(BuildEvent.Failure("Gradle build failed with exit code $exitCode"))
+                return@withContext
+            }
 
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "APK assembled: ${artifactFile.name}")))
-            onEvent(BuildEvent.Progress(0.90f, "APK packaged"))
+            onEvent(BuildEvent.Progress(0.92f, "Collecting generated APK artifact…"))
+            val apk = findLatestApk(projectDir) ?: run {
+                onEvent(BuildEvent.Failure("Gradle reported success but no APK was found under app/build/outputs/apk."))
+                return@withContext
+            }
 
-            // Phase 7: Signing (90-95%)
-            onEvent(BuildEvent.Progress(0.92f, "Signing APK…"))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Signing APK with BuildBuddy debug key…")))
-            delay(200)
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "APK signed successfully")))
-            onEvent(BuildEvent.Progress(0.95f, "APK signed"))
-
-            // Phase 8: Finalization (95-100%)
-            onEvent(BuildEvent.Progress(0.98f, "Finalizing build…"))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Build output: ${artifactFile.absolutePath}")))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "APK size: ${FileUtils.formatFileSize(artifactFile.length())}")))
-            delay(100)
-
-            onEvent(BuildEvent.Progress(1.0f, "Build successful"))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "BUILD SUCCESSFUL")))
-            onEvent(BuildEvent.Success(artifactFile.absolutePath, artifactFile.length()))
-
+            val sanitizedProjectName = project.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            val destination = File(FileUtils.getArtifactsDir(context), "${sanitizedProjectName}_${buildId}.apk")
+            apk.copyTo(destination, overwrite = true)
+            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "APK captured: ${destination.absolutePath}")))
+            onEvent(BuildEvent.Progress(1f, "Build completed"))
+            onEvent(BuildEvent.Success(destination.absolutePath, destination.length()))
         } catch (e: Exception) {
-            onEvent(BuildEvent.Log(logEntry(LogLevel.ERROR, "Build failed with exception: ${e.message}")))
-            onEvent(BuildEvent.Failure(e.message ?: "Unknown build error"))
-        }
-    }
-
-    private data class ValidationResult(
-        val errors: List<String>,
-        val warnings: List<String>
-    )
-
-    private fun validateProject(projectDir: File, project: Project): ValidationResult {
-        val errors = mutableListOf<String>()
-        val warnings = mutableListOf<String>()
-
-        // Check for manifest
-        val manifestFile = findFile(projectDir, "AndroidManifest.xml")
-        if (manifestFile == null) {
-            errors.add("AndroidManifest.xml not found")
-        }
-
-        // Check for source files
-        val srcDir = findSourceDir(projectDir, project)
-        if (srcDir == null || !srcDir.exists()) {
-            errors.add("Source directory not found")
-        }
-
-        // Check for build.gradle
-        val buildGradle = findFile(projectDir, "build.gradle.kts")
-            ?: findFile(projectDir, "build.gradle")
-        if (buildGradle == null) {
-            warnings.add("No Gradle build file found in app directory")
-        }
-
-        // Check supported project format
-        if (project.language == ProjectLanguage.JAVA) {
-            warnings.add("Java compilation has limited on-device support. Kotlin recommended.")
-        }
-
-        return ValidationResult(errors, warnings)
-    }
-
-    private fun findFile(dir: File, name: String): File? {
-        return dir.walkTopDown().firstOrNull { it.name == name }
-    }
-
-    private fun findSourceDir(dir: File, project: Project): File? {
-        val mainSrc = File(dir, "app/src/main/java")
-        if (mainSrc.exists()) return mainSrc
-        val pkgPath = project.packageName.replace(".", "/")
-        return dir.walkTopDown().firstOrNull {
-            it.isDirectory && it.absolutePath.endsWith(pkgPath)
-        }?.parentFile
-    }
-
-    private fun collectSourceFiles(dir: File, project: Project): List<File> {
-        val extensions = when (project.language) {
-            ProjectLanguage.KOTLIN -> listOf("kt", "kts")
-            ProjectLanguage.JAVA -> listOf("java")
-        }
-        return dir.walkTopDown()
-            .filter { it.isFile && it.extension in extensions }
-            .toList()
-    }
-
-    private fun collectResourceFiles(dir: File): List<File> {
-        val resDir = dir.walkTopDown().firstOrNull { it.isDirectory && it.name == "res" }
-        return resDir?.walkTopDown()?.filter { it.isFile }?.toList() ?: emptyList()
-    }
-
-    private fun basicSyntaxCheck(file: File, content: String, project: Project): String? {
-        if (content.isBlank()) return null
-
-        when (project.language) {
-            ProjectLanguage.KOTLIN -> {
-                val openBraces = content.count { it == '{' }
-                val closeBraces = content.count { it == '}' }
-                if (openBraces != closeBraces) {
-                    return "${file.name}: Mismatched braces (${openBraces} open, ${closeBraces} close)"
-                }
-                val openParens = content.count { it == '(' }
-                val closeParens = content.count { it == ')' }
-                if (openParens != closeParens) {
-                    return "${file.name}: Mismatched parentheses (${openParens} open, ${closeParens} close)"
-                }
-            }
-            ProjectLanguage.JAVA -> {
-                val openBraces = content.count { it == '{' }
-                val closeBraces = content.count { it == '}' }
-                if (openBraces != closeBraces) {
-                    return "${file.name}: Mismatched braces (${openBraces} open, ${closeBraces} close)"
-                }
+            val wasCancelled = buildCancellationRegistry.isCancelled(buildId) || e is InterruptedException
+            buildCancellationRegistry.unregister(buildId)
+            if (wasCancelled) {
+                onEvent(BuildEvent.Cancelled())
+            } else {
+                onEvent(BuildEvent.Failure(e.message ?: "Build failed"))
             }
         }
-        return null
     }
 
-    private fun packageApk(
-        projectDir: File,
-        sourceFiles: List<File>,
-        resourceFiles: List<File>,
-        outputFile: File,
-        project: Project
-    ) {
-        outputFile.parentFile?.mkdirs()
-        ZipOutputStream(FileOutputStream(outputFile)).use { zos ->
-            // Add manifest
-            findFile(projectDir, "AndroidManifest.xml")?.let { manifest ->
-                zos.putNextEntry(ZipEntry("AndroidManifest.xml"))
-                manifest.inputStream().use { it.copyTo(zos) }
-                zos.closeEntry()
+    private suspend fun emitProgressFromLog(line: String, onEvent: suspend (BuildEvent) -> Unit) {
+        val normalized = line.lowercase(Locale.US)
+        when {
+            normalized.contains("task :app:prebuild") -> onEvent(BuildEvent.Progress(0.22f, "Preparing project…"))
+            normalized.contains("compile") -> onEvent(BuildEvent.Progress(0.45f, "Compiling sources…"))
+            normalized.contains("merge") && normalized.contains("resources") -> onEvent(BuildEvent.Progress(0.60f, "Merging resources…"))
+            normalized.contains("dex") -> onEvent(BuildEvent.Progress(0.75f, "Dexing bytecode…"))
+            normalized.contains("package") || normalized.contains("assemble") -> onEvent(BuildEvent.Progress(0.88f, "Packaging APK…"))
+            normalized.contains("build successful") -> {
+                onEvent(BuildEvent.Progress(0.95f, "Finalizing build artifact…"))
+                delay(50)
             }
-
-            // Add source files as compiled classes placeholder
-            sourceFiles.forEach { file ->
-                val entryName = "classes/${file.toRelativeString(projectDir)}"
-                zos.putNextEntry(ZipEntry(entryName))
-                file.inputStream().use { it.copyTo(zos) }
-                zos.closeEntry()
-            }
-
-            // Add resources
-            resourceFiles.forEach { file ->
-                val resRoot = file.absolutePath.substringAfter("/res/")
-                val entryName = "res/$resRoot"
-                zos.putNextEntry(ZipEntry(entryName))
-                file.inputStream().use { it.copyTo(zos) }
-                zos.closeEntry()
-            }
-
-            // Add build metadata
-            val metadata = buildString {
-                appendLine("BuildBuddy Build Artifact")
-                appendLine("Project: ${project.name}")
-                appendLine("Package: ${project.packageName}")
-                appendLine("Language: ${project.language.displayName}")
-                appendLine("Template: ${project.template.displayName}")
-                appendLine("Min SDK: ${project.minSdk}")
-                appendLine("Target SDK: ${project.targetSdk}")
-                appendLine("Built: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}")
-                appendLine("Builder: BuildBuddy On-Device Build Engine v1.0")
-                appendLine()
-                appendLine("Note: This APK is assembled by BuildBuddy's on-device build engine.")
-                appendLine("It contains the validated project structure for supported template formats.")
-                appendLine("Full Gradle compilation parity requires expansion of the on-device toolchain.")
-            }
-            zos.putNextEntry(ZipEntry("META-INF/BUILDBUDDY.txt"))
-            zos.write(metadata.toByteArray())
-            zos.closeEntry()
         }
     }
 
-    private fun logEntry(level: LogLevel, message: String) = BuildLogEntry(
-        timestamp = System.currentTimeMillis(),
-        level = level,
-        message = message,
-        source = "BuildEngine"
-    )
+    private fun resolveGradleWrapper(projectDir: File): File? {
+        val unix = File(projectDir, "gradlew")
+        if (unix.exists()) {
+            unix.setExecutable(true)
+            return unix
+        }
+        return File(projectDir, "gradlew.bat").takeIf { it.exists() }
+    }
+
+    private fun findGradleWrapperJar(projectDir: File): File? =
+        File(projectDir, "gradle/wrapper/gradle-wrapper.jar").takeIf { it.exists() && it.isFile }
+
+    private fun buildCommand(wrapperScript: File): List<String> = when {
+        wrapperScript.name.endsWith(".bat", ignoreCase = true) -> listOf("cmd", "/c", wrapperScript.absolutePath, ":app:assembleDebug", "--stacktrace", "--console=plain")
+        else -> listOf("sh", wrapperScript.absolutePath, ":app:assembleDebug", "--stacktrace", "--console=plain")
+    }
+
+    private fun findLatestApk(projectDir: File): File? {
+        val outputsDir = File(projectDir, "app/build/outputs/apk")
+        return outputsDir.takeIf { it.exists() }
+            ?.walkTopDown()
+            ?.filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }
+            ?.maxByOrNull { it.lastModified() }
+    }
+
+    private fun classifyLogLevel(line: String): LogLevel {
+        val normalized = line.lowercase(Locale.US)
+        return when {
+            normalized.contains("error") || normalized.contains("exception") || normalized.contains("failed") -> LogLevel.ERROR
+            normalized.contains("warning") || normalized.contains("deprecated") -> LogLevel.WARNING
+            normalized.contains("debug") -> LogLevel.DEBUG
+            else -> LogLevel.INFO
+        }
+    }
+
+    private fun logEntry(level: LogLevel, message: String): BuildLogEntry =
+        BuildLogEntry(timestamp = System.currentTimeMillis(), level = level, message = message, source = "gradle")
 }

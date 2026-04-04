@@ -4,7 +4,8 @@ import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -15,8 +16,7 @@ class SnapshotManager @Inject constructor(
     private val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
 
     fun createSnapshot(projectId: String, projectDir: File, label: String = "auto"): File {
-        val snapshotDir = File(FileUtils.getSnapshotsDir(context), projectId)
-        snapshotDir.mkdirs()
+        val snapshotDir = File(FileUtils.getSnapshotsDir(context), projectId).apply { mkdirs() }
         val timestamp = dateFormat.format(Date())
         val snapshotFile = File(snapshotDir, "${label}_${timestamp}.zip")
         FileUtils.zipDirectory(projectDir, snapshotFile)
@@ -40,9 +40,16 @@ class SnapshotManager @Inject constructor(
     }
 
     fun restoreSnapshot(projectId: String, snapshotPath: String, projectDir: File) {
+        val snapshotRoot = File(FileUtils.getSnapshotsDir(context), projectId).canonicalFile
+        val snapshotFile = File(snapshotPath).canonicalFile
+        require(snapshotFile.path.startsWith(snapshotRoot.path + File.separator)) {
+            "Snapshot path is outside the project snapshot directory"
+        }
+        require(snapshotFile.exists() && snapshotFile.isFile) { "Snapshot file not found" }
+
         projectDir.deleteRecursively()
         projectDir.mkdirs()
-        FileUtils.unzipToDirectory(File(snapshotPath), projectDir)
+        FileUtils.unzipToDirectory(snapshotFile, projectDir)
     }
 
     fun deleteSnapshot(snapshotPath: String) {

@@ -1,47 +1,41 @@
 # BuildBuddy ProGuard Rules
 
 # Keep Kotlin serialization
--keepattributes *Annotation*, InnerClasses
+-keepattributes *Annotation*, InnerClasses, Signature, EnclosingMethod, Exceptions
 -dontnote kotlinx.serialization.AnnotationsKt
--keepclassmembers class kotlinx.serialization.json.** {
-    *** Companion;
-}
--keepclasseswithmembers class kotlinx.serialization.json.** {
-    kotlinx.serialization.KSerializer serializer(...);
-}
+-keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
+-keepclasseswithmembers class kotlinx.serialization.json.** { kotlinx.serialization.KSerializer serializer(...); }
 -keep,includedescriptorclasses class com.build.buddyai.**$$serializer { *; }
--keepclassmembers class com.build.buddyai.** {
-    *** Companion;
-}
--keepclasseswithmembers class com.build.buddyai.** {
-    kotlinx.serialization.KSerializer serializer(...);
-}
+-keepclassmembers class com.build.buddyai.** { *** Companion; }
+-keepclasseswithmembers class com.build.buddyai.** { kotlinx.serialization.KSerializer serializer(...); }
 
 # Keep Room entities
 -keep class com.build.buddyai.core.data.local.entity.** { *; }
 
-# Keep Hilt
+# Hilt / Dagger / ViewModels
 -keep class dagger.hilt.** { *; }
 -keep class javax.inject.** { *; }
+-keep class hilt_aggregated_deps.** { *; }
+-keep class * extends androidx.lifecycle.ViewModel { *; }
+-keep @dagger.hilt.android.lifecycle.HiltViewModel class * { *; }
+-keep class **_HiltModules_* { *; }
+-keep class Hilt_* { *; }
+-keep class *_Factory { *; }
+-keep class *_MembersInjector { *; }
+-dontwarn dagger.hilt.internal.**
 
-# OkHttp
+# Networking
 -dontwarn okhttp3.**
 -dontwarn okio.**
 -keep class okhttp3.** { *; }
-
-# Retrofit
 -keep class retrofit2.** { *; }
--keepattributes Signature
--keepattributes Exceptions
 
 # Coroutines
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
--keepclassmembers class kotlinx.coroutines.** {
-    volatile <fields>;
-}
+-keepclassmembers class kotlinx.coroutines.** { volatile <fields>; }
 
-# Keep model classes for serialization
+# Keep model and network classes for serialization/parsing
 -keep class com.build.buddyai.core.model.** { *; }
 -keep class com.build.buddyai.core.network.** { *; }
 

@@ -8,29 +8,41 @@ import com.build.buddyai.core.common.SnapshotManager
 import com.build.buddyai.core.data.repository.ChatRepository
 import com.build.buddyai.core.data.repository.ProjectRepository
 import com.build.buddyai.core.data.repository.ProviderRepository
-import com.build.buddyai.core.model.*
+import com.build.buddyai.core.model.ActionStatus
+import com.build.buddyai.core.model.AgentAction
+import com.build.buddyai.core.model.AgentActionType
+import com.build.buddyai.core.model.AgentMode
+import com.build.buddyai.core.model.ChatMessage
+import com.build.buddyai.core.model.ChatSession
+import com.build.buddyai.core.model.FileDiff
+import com.build.buddyai.core.model.MessageRole
+import com.build.buddyai.core.model.MessageStatus
 import com.build.buddyai.core.network.AiStreamingService
 import com.build.buddyai.core.network.StreamEvent
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
 
 data class AgentUiState(
+    val sessionId: String? = null,
     val messages: List<ChatMessage> = emptyList(),
     val currentInput: String = "",
-    val isStreaming: Boolean = false,
-    val agentMode: AgentMode = AgentMode.ASK,
     val attachedFiles: List<String> = emptyList(),
+    val pendingDiffs: List<FileDiff> = emptyList(),
+    val isStreaming: Boolean = false,
     val hasProvider: Boolean = false,
     val providerName: String? = null,
     val modelName: String? = null,
-    val sessionId: String? = null,
-    val pendingDiffs: List<FileDiff> = emptyList(),
+    val agentMode: AgentMode = AgentMode.ASK,
     val currentActions: List<AgentAction> = emptyList()
 )
 
@@ -49,28 +61,42 @@ class AgentViewModel @Inject constructor(
 
     private var currentProjectId: String? = null
     private var streamJob: Job? = null
+    private var sessionsJob: Job? = null
+    private var messagesJob: Job? = null
 
     fun initialize(projectId: String) {
         currentProjectId = projectId
+
         viewModelScope.launch {
             val provider = providerRepository.getDefaultProvider()
             _uiState.update {
                 it.copy(
                     hasProvider = provider != null,
                     providerName = provider?.name,
-                    modelName = provider?.models?.find { m -> m.id == provider.selectedModelId }?.name
+                    modelName = provider?.models?.find { model -> model.id == provider.selectedModelId }?.name
                 )
             }
         }
-        viewModelScope.launch {
-            chatRepository.getSessionsByProject(projectId).collect { sessions ->
+
+        sessionsJob?.cancel()
+        sessionsJob = viewModelScope.launch {
+            chatRepository.getSessionsByProject(projectId).collectLatest { sessions ->
                 val session = sessions.firstOrNull()
-                if (session != null) {
-                    _uiState.update { it.copy(sessionId = session.id) }
-                    chatRepository.getMessagesBySession(session.id).collect { messages ->
-                        _uiState.update { it.copy(messages = messages) }
-                    }
-                }
+                _uiState.update { it.copy(sessionId = session?.id) }
+                observeMessages(session?.id)
+            }
+        }
+    }
+
+    private fun observeMessages(sessionId: String?) {
+        messagesJob?.cancel()
+        if (sessionId == null) {
+            _uiState.update { it.copy(messages = emptyList()) }
+            return
+        }
+        messagesJob = viewModelScope.launch {
+            chatRepository.getMessagesBySession(sessionId).collectLatest { messages ->
+                _uiState.update { it.copy(messages = messages) }
             }
         }
     }
@@ -79,9 +105,10 @@ class AgentViewModel @Inject constructor(
     fun updateAgentMode(mode: AgentMode) = _uiState.update { it.copy(agentMode = mode) }
 
     fun toggleFileAttachment(path: String) {
+        val normalized = normalizePathOrNull(path) ?: return
         _uiState.update { state ->
             val files = state.attachedFiles.toMutableList()
-            if (files.contains(path)) files.remove(path) else files.add(path)
+            if (files.contains(normalized)) files.remove(normalized) else files.add(normalized)
             state.copy(attachedFiles = files)
         }
     }
@@ -92,17 +119,8 @@ class AgentViewModel @Inject constructor(
         if (input.isBlank() || !state.hasProvider) return
 
         viewModelScope.launch {
-            // Ensure session exists
-            val sessionId = state.sessionId ?: run {
-                val newId = UUID.randomUUID().toString()
-                chatRepository.createSession(
-                    ChatSession(id = newId, projectId = currentProjectId ?: return@launch, title = input.take(50))
-                )
-                _uiState.update { it.copy(sessionId = newId) }
-                newId
-            }
-
-            // Add user message
+            val projectId = currentProjectId ?: return@launch
+            val sessionId = state.sessionId ?: createSession(projectId, input)
             val userMsg = ChatMessage(
                 id = UUID.randomUUID().toString(),
                 sessionId = sessionId,
@@ -113,43 +131,51 @@ class AgentViewModel @Inject constructor(
             chatRepository.insertMessage(userMsg)
             _uiState.update {
                 it.copy(
-                    messages = it.messages + userMsg,
                     currentInput = "",
                     attachedFiles = emptyList(),
                     isStreaming = true,
                     currentActions = listOf(
-                        AgentAction(UUID.randomUUID().toString(), AgentActionType.PLANNING, "Analyzing request", ActionStatus.IN_PROGRESS)
+                        AgentAction(
+                            UUID.randomUUID().toString(),
+                            AgentActionType.PLANNING,
+                            "Analyzing request",
+                            ActionStatus.IN_PROGRESS
+                        )
                     )
                 )
             }
 
-            // Create snapshot before AI changes
-            currentProjectId?.let { pid ->
-                val project = projectRepository.getProjectById(pid) ?: return@let
-                if (File(project.projectPath).exists()) {
-                    snapshotManager.createSnapshot(pid, File(project.projectPath), "pre_ai")
+            currentProject()?.let { project ->
+                val projectDir = File(project.projectPath)
+                if (projectDir.exists()) {
+                    snapshotManager.createSnapshot(project.id, projectDir, "pre_ai")
                 }
             }
 
-            // Stream AI response
             streamAiResponse(sessionId, input, state.attachedFiles)
         }
+    }
+
+    private suspend fun createSession(projectId: String, seedTitle: String): String {
+        val sessionId = UUID.randomUUID().toString()
+        chatRepository.createSession(ChatSession(id = sessionId, projectId = projectId, title = seedTitle.take(50)))
+        _uiState.update { it.copy(sessionId = sessionId) }
+        return sessionId
     }
 
     private fun streamAiResponse(sessionId: String, userInput: String, attachedFiles: List<String>) {
         streamJob?.cancel()
         streamJob = viewModelScope.launch {
-            val provider = providerRepository.getDefaultProvider() ?: return@launch
-            val apiKey = providerRepository.getApiKey(provider.id) ?: return@launch
-            val modelId = provider.selectedModelId ?: provider.models.firstOrNull()?.id ?: return@launch
+            val provider = providerRepository.getDefaultProvider() ?: return@launch finishWithError(sessionId, "No AI provider configured")
+            val apiKey = providerRepository.getApiKey(provider.id) ?: return@launch finishWithError(sessionId, "Missing API key")
+            val modelId = provider.selectedModelId ?: provider.models.firstOrNull()?.id ?: return@launch finishWithError(sessionId, "No model selected")
+            val project = currentProject() ?: return@launch finishWithError(sessionId, "Project not found")
+            val projectDir = File(project.projectPath)
 
-            // Build context with attached files
             val fileContextParts = attachedFiles.mapNotNull { path ->
-                currentProjectId?.let { pid ->
-                    val project = projectRepository.getProjectById(pid) ?: return@let null
-                    val content = FileUtils.readFileContent(File(project.projectPath), path)
-                    if (content != null) "File: $path\n```\n$content\n```" else null
-                }
+                val normalized = normalizePathOrNull(path) ?: return@mapNotNull null
+                val content = FileUtils.readFileContent(projectDir, normalized) ?: return@mapNotNull null
+                "File: $normalized\n```\n$content\n```"
             }
 
             val systemPrompt = buildString {
@@ -157,9 +183,11 @@ class AgentViewModel @Inject constructor(
                 appendLine("You help users build Android apps by generating, modifying, and explaining code.")
                 appendLine("When generating code, output complete file contents wrapped in code blocks with the file path.")
                 appendLine("Format: ```filepath:path/to/File.kt\\n<code>\\n```")
+                appendLine("Only write files inside the current project sandbox.")
                 appendLine("Be concise, accurate, and production-quality in all code output.")
                 if (fileContextParts.isNotEmpty()) {
-                    appendLine("\nProject files for context:")
+                    appendLine()
+                    appendLine("Project files for context:")
                     fileContextParts.forEach { appendLine(it) }
                 }
             }
@@ -169,10 +197,11 @@ class AgentViewModel @Inject constructor(
                 _uiState.value.messages.takeLast(20).forEach { msg ->
                     add(mapOf("role" to if (msg.role == MessageRole.USER) "user" else "assistant", "content" to msg.content))
                 }
+                add(mapOf("role" to "user", "content" to userInput))
             }
 
             val assistantMsgId = UUID.randomUUID().toString()
-            val assistantMsg = ChatMessage(
+            val placeholder = ChatMessage(
                 id = assistantMsgId,
                 sessionId = sessionId,
                 role = MessageRole.ASSISTANT,
@@ -180,10 +209,9 @@ class AgentViewModel @Inject constructor(
                 status = MessageStatus.STREAMING,
                 modelId = modelId
             )
-            _uiState.update { it.copy(messages = it.messages + assistantMsg) }
+            _uiState.update { it.copy(messages = it.messages + placeholder) }
 
             val contentBuilder = StringBuilder()
-
             streamingService.streamMessage(
                 providerType = provider.type,
                 apiKey = apiKey,
@@ -192,69 +220,49 @@ class AgentViewModel @Inject constructor(
                 temperature = provider.parameters.temperature,
                 maxTokens = provider.parameters.maxTokens,
                 topP = provider.parameters.topP
-            ).collect { event ->
+            ).collectLatest { event ->
                 when (event) {
                     is StreamEvent.Token -> {
                         contentBuilder.append(event.content)
-                        val updatedMsg = assistantMsg.copy(content = contentBuilder.toString())
+                        val updated = placeholder.copy(content = contentBuilder.toString())
                         _uiState.update { state ->
-                            state.copy(messages = state.messages.map { if (it.id == assistantMsgId) updatedMsg else it })
+                            state.copy(messages = state.messages.map { if (it.id == assistantMsgId) updated else it })
                         }
                     }
                     is StreamEvent.Done -> {
-                        val finalMsg = assistantMsg.copy(
-                            content = contentBuilder.toString(),
-                            status = MessageStatus.COMPLETE
-                        )
-                        chatRepository.insertMessage(finalMsg)
+                        val finalMessage = placeholder.copy(content = contentBuilder.toString(), status = MessageStatus.COMPLETE)
+                        chatRepository.insertMessage(finalMessage)
                         _uiState.update { state ->
                             state.copy(
-                                messages = state.messages.map { if (it.id == assistantMsgId) finalMsg else it },
+                                messages = state.messages.map { if (it.id == assistantMsgId) finalMessage else it },
                                 isStreaming = false,
                                 currentActions = emptyList()
                             )
                         }
-                        // Parse and prepare file diffs
-                        parseDiffsFromResponse(contentBuilder.toString())
+                        parseDiffsFromResponse(contentBuilder.toString(), projectDir)
                     }
                     is StreamEvent.Error -> {
-                        val errorMsg = assistantMsg.copy(
-                            content = "Error: ${event.message}",
-                            status = MessageStatus.ERROR
-                        )
-                        chatRepository.insertMessage(errorMsg)
-                        _uiState.update { state ->
-                            state.copy(
-                                messages = state.messages.map { if (it.id == assistantMsgId) errorMsg else it },
-                                isStreaming = false,
-                                currentActions = emptyList()
-                            )
-                        }
+                        finishWithError(sessionId, event.message, assistantMsgId, placeholder)
                     }
                 }
             }
         }
     }
 
-    private fun parseDiffsFromResponse(content: String) {
+    private suspend fun parseDiffsFromResponse(content: String, projectDir: File) {
         val regex = Regex("```filepath:(.*?)\\n([\\s\\S]*?)```")
         val diffs = regex.findAll(content).mapNotNull { match ->
-            val path = match.groupValues[1].trim()
+            val rawPath = match.groupValues[1].trim()
+            val normalized = normalizePathOrNull(rawPath) ?: return@mapNotNull null
             val code = match.groupValues[2].trim()
-            if (path.isNotBlank() && code.isNotBlank()) {
-                val project = currentProjectId?.let { pid ->
-                    kotlinx.coroutines.runBlocking { projectRepository.getProjectById(pid) }
-                }
-                val originalContent = project?.let {
-                    FileUtils.readFileContent(File(it.projectPath), path)
-                } ?: ""
-                FileDiff(
-                    filePath = path,
-                    originalContent = originalContent,
-                    modifiedContent = code,
-                    isNewFile = originalContent.isEmpty()
-                )
-            } else null
+            if (code.isBlank()) return@mapNotNull null
+            val originalContent = FileUtils.readFileContent(projectDir, normalized).orEmpty()
+            FileDiff(
+                filePath = normalized,
+                originalContent = originalContent,
+                modifiedContent = code,
+                isNewFile = originalContent.isEmpty()
+            )
         }.toList()
 
         if (diffs.isNotEmpty()) {
@@ -264,9 +272,10 @@ class AgentViewModel @Inject constructor(
 
     fun applyDiffs() {
         viewModelScope.launch {
-            val project = currentProjectId?.let { projectRepository.getProjectById(it) } ?: return@launch
+            val project = currentProject() ?: return@launch
+            val projectDir = File(project.projectPath)
             _uiState.value.pendingDiffs.forEach { diff ->
-                FileUtils.writeFileContent(File(project.projectPath), diff.filePath, diff.modifiedContent)
+                FileUtils.writeFileContent(projectDir, diff.filePath, diff.modifiedContent)
             }
             _uiState.update { it.copy(pendingDiffs = emptyList()) }
         }
@@ -284,12 +293,46 @@ class AgentViewModel @Inject constructor(
     fun retryLastMessage() {
         val messages = _uiState.value.messages
         val lastUserMsg = messages.lastOrNull { it.role == MessageRole.USER } ?: return
-        // Remove last assistant message if error
         val lastAssistant = messages.lastOrNull { it.role == MessageRole.ASSISTANT }
         if (lastAssistant?.status == MessageStatus.ERROR) {
-            _uiState.update { it.copy(messages = it.messages.filter { m -> m.id != lastAssistant.id }) }
+            _uiState.update { it.copy(messages = it.messages.filter { message -> message.id != lastAssistant.id }) }
         }
         _uiState.update { it.copy(currentInput = lastUserMsg.content) }
         sendMessage()
     }
+
+    private suspend fun finishWithError(
+        sessionId: String,
+        message: String,
+        assistantMsgId: String? = null,
+        placeholder: ChatMessage? = null
+    ) {
+        val resolvedId = assistantMsgId ?: UUID.randomUUID().toString()
+        val resolvedPlaceholder = placeholder ?: ChatMessage(
+            id = resolvedId,
+            sessionId = sessionId,
+            role = MessageRole.ASSISTANT,
+            content = "",
+            status = MessageStatus.STREAMING
+        )
+        val errorMsg = resolvedPlaceholder.copy(content = "Error: $message", status = MessageStatus.ERROR)
+        chatRepository.insertMessage(errorMsg)
+        _uiState.update { state ->
+            val existing = state.messages.any { it.id == resolvedId }
+            state.copy(
+                messages = if (existing) state.messages.map { if (it.id == resolvedId) errorMsg else it } else state.messages + errorMsg,
+                isStreaming = false,
+                currentActions = emptyList()
+            )
+        }
+    }
+
+    private suspend fun currentProject() = currentProjectId?.let { projectRepository.getProjectById(it) }
+
+    private fun normalizePathOrNull(path: String): String? =
+        try {
+            FileUtils.normalizeRelativePath(path)
+        } catch (_: IllegalArgumentException) {
+            null
+        }
 }

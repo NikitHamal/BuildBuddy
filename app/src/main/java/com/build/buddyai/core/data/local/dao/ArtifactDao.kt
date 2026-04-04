@@ -1,6 +1,10 @@
 package com.build.buddyai.core.data.local.dao
 
-import androidx.room.*
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
 import com.build.buddyai.core.data.local.entity.ArtifactEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -8,6 +12,9 @@ import kotlinx.coroutines.flow.Flow
 interface ArtifactDao {
     @Query("SELECT * FROM artifacts WHERE projectId = :projectId ORDER BY createdAt DESC")
     fun getArtifactsByProject(projectId: String): Flow<List<ArtifactEntity>>
+
+    @Query("SELECT * FROM artifacts WHERE projectId = :projectId ORDER BY createdAt DESC")
+    suspend fun getArtifactsByProjectNow(projectId: String): List<ArtifactEntity>
 
     @Query("SELECT * FROM artifacts WHERE id = :id")
     suspend fun getArtifactById(id: String): ArtifactEntity?

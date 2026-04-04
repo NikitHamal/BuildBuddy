@@ -1,12 +1,14 @@
 package com.build.buddyai.core.di
 
+import com.build.buddyai.BuildConfig
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import kotlinx.serialization.json.Json
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
-import okhttp3.logging.HttpLoggingInterceptor
+import timber.log.Timber
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 
@@ -27,15 +29,22 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideOkHttpClient(): OkHttpClient {
-        return OkHttpClient.Builder()
+        val builder = OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(120, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
-            .addInterceptor(
-                HttpLoggingInterceptor().apply {
-                    level = HttpLoggingInterceptor.Level.BASIC
-                }
-            )
-            .build()
+
+        if (BuildConfig.DEBUG) {
+            builder.addInterceptor(Interceptor { chain ->
+                val request = chain.request()
+                Timber.tag("HTTP").d("%s %s", request.method, redactUrl(request.url.toString()))
+                chain.proceed(request)
+            })
+        }
+
+        return builder.build()
     }
+
+    private fun redactUrl(url: String): String =
+        url.replace(Regex("([?&]key=)[^&#]+"), "$1<redacted>")
 }
