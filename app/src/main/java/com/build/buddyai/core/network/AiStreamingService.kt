@@ -69,6 +69,16 @@ class AiStreamingService @Inject constructor(
                 extraHeaders = mapOf("HTTP-Referer" to "com.build.buddyai", "X-Title" to "BuildBuddy")
             )
             ProviderType.GEMINI -> buildGeminiStreamRequest(apiKey, modelId, messages, temperature, maxTokens, topP)
+            ProviderType.PAXSENIX -> buildChatCompletionsStreamRequest(
+                baseUrl = "${ProviderType.PAXSENIX.baseUrl}/chat/completions",
+                apiKeyHeader = "Authorization",
+                apiKeyValue = "Bearer $apiKey",
+                modelId = modelId,
+                messages = messages,
+                temperature = temperature,
+                maxTokens = maxTokens,
+                topP = topP
+            )
         }
 
         val factory = EventSources.createFactory(client)
@@ -81,7 +91,7 @@ class AiStreamingService @Inject constructor(
                 }
                 try {
                     val token = when (providerType) {
-                        ProviderType.NVIDIA, ProviderType.OPENROUTER -> extractChatCompletionsDelta(data)
+                        ProviderType.NVIDIA, ProviderType.OPENROUTER, ProviderType.PAXSENIX -> extractChatCompletionsDelta(data)
                         ProviderType.GEMINI -> extractGeminiDelta(data)
                     }
                     if (!token.isNullOrEmpty()) {

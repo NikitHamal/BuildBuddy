@@ -28,7 +28,8 @@ enum class ProviderType(
 ) {
     NVIDIA("NVIDIA", "https://integrate.api.nvidia.com/v1"),
     OPENROUTER("OpenRouter", "https://openrouter.ai/api/v1"),
-    GEMINI("Gemini", "https://generativelanguage.googleapis.com/v1beta")
+    GEMINI("Gemini", "https://generativelanguage.googleapis.com/v1beta"),
+    PAXSENIX("Paxsenix", "https://api.paxsenix.org/v1")
 }
 
 @Serializable

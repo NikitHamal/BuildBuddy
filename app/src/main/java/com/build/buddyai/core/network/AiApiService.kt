@@ -46,6 +46,10 @@ class AiApiService @Inject constructor(
                     .url("${ProviderType.GEMINI.baseUrl}/models")
                     .addHeader("x-goog-api-key", apiKey)
                     .build()
+                ProviderType.PAXSENIX -> Request.Builder()
+                    .url("${ProviderType.PAXSENIX.baseUrl}/models")
+                    .addHeader("Authorization", "Bearer $apiKey")
+                    .build()
             }
 
             client.newCall(request).execute().use { response ->
@@ -66,6 +70,7 @@ class AiApiService @Inject constructor(
                 ProviderType.NVIDIA -> buildNvidiaRequest(apiKey, "meta/llama-3.1-8b-instruct", listOf(mapOf("role" to "user", "content" to "hi")), 0.1f, 5, 1f)
                 ProviderType.OPENROUTER -> buildOpenRouterRequest(apiKey, "meta-llama/llama-3.1-8b-instruct:free", listOf(mapOf("role" to "user", "content" to "hi")), 0.1f, 5, 1f)
                 ProviderType.GEMINI -> buildGeminiRequest(apiKey, "gemini-1.5-flash", listOf(mapOf("role" to "user", "content" to "hi")), 0.1f, 5, 1f)
+                ProviderType.PAXSENIX -> buildPaxsenixRequest(apiKey, "gpt-4o", listOf(mapOf("role" to "user", "content" to "hi")), 0.1f, 5, 1f)
             }
 
             client.newCall(request).execute().use { response ->
@@ -94,6 +99,7 @@ class AiApiService @Inject constructor(
                 ProviderType.NVIDIA -> buildNvidiaRequest(apiKey, modelId, messages, temperature, maxTokens, topP)
                 ProviderType.OPENROUTER -> buildOpenRouterRequest(apiKey, modelId, messages, temperature, maxTokens, topP)
                 ProviderType.GEMINI -> buildGeminiRequest(apiKey, modelId, messages, temperature, maxTokens, topP)
+                ProviderType.PAXSENIX -> buildPaxsenixRequest(apiKey, modelId, messages, temperature, maxTokens, topP)
             }
 
             client.newCall(request).execute().use { response ->
@@ -150,6 +156,20 @@ class AiApiService @Inject constructor(
         .addHeader("x-goog-api-key", apiKey)
         .addHeader("Content-Type", "application/json")
         .post(buildGeminiBody(messages, temperature, maxTokens, topP).toString().toRequestBody(JSON_MEDIA_TYPE))
+        .build()
+
+    private fun buildPaxsenixRequest(
+        apiKey: String,
+        modelId: String,
+        messages: List<Map<String, String>>,
+        temperature: Float,
+        maxTokens: Int,
+        topP: Float
+    ): Request = Request.Builder()
+        .url("${ProviderType.PAXSENIX.baseUrl}/chat/completions")
+        .addHeader("Authorization", "Bearer $apiKey")
+        .addHeader("Content-Type", "application/json")
+        .post(buildChatCompletionsBody(modelId, messages, temperature, maxTokens, topP).toString().toRequestBody(JSON_MEDIA_TYPE))
         .build()
 
     private fun buildChatCompletionsBody(
@@ -209,7 +229,7 @@ class AiApiService @Inject constructor(
     private fun parseModels(providerType: ProviderType, body: String): List<AiModel> {
         val root = json.parseToJsonElement(body).jsonObject
         return when (providerType) {
-            ProviderType.NVIDIA, ProviderType.OPENROUTER -> root["data"]?.jsonArray?.mapNotNull { element ->
+            ProviderType.NVIDIA, ProviderType.OPENROUTER, ProviderType.PAXSENIX -> root["data"]?.jsonArray?.mapNotNull { element ->
                 val item = element.jsonObject
                 val id = item["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
                 AiModel(
@@ -242,7 +262,7 @@ class AiApiService @Inject constructor(
     private fun extractContent(providerType: ProviderType, body: String): String {
         val root = json.parseToJsonElement(body).jsonObject
         return when (providerType) {
-            ProviderType.NVIDIA, ProviderType.OPENROUTER -> root["choices"]?.jsonArray?.firstOrNull()?.jsonObject
+            ProviderType.NVIDIA, ProviderType.OPENROUTER, ProviderType.PAXSENIX -> root["choices"]?.jsonArray?.firstOrNull()?.jsonObject
                 ?.get("message")?.jsonObject
                 ?.get("content")?.jsonPrimitive?.contentOrNull.orEmpty()
             ProviderType.GEMINI -> root["candidates"]?.jsonArray?.firstOrNull()?.jsonObject
