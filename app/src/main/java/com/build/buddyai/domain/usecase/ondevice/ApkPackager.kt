@@ -74,9 +74,9 @@ class ApkPackager(
             val result = signMethod.invoke(signer, unsignedApk.absolutePath, signedApk.absolutePath, null) as Boolean
             if (!result) throw RuntimeException("ApkSigner.signWithTestKey returned false")
             log("[APK] APK signed successfully via ApkSigner")
-        } catch (e: ClassNotFoundException) {
+        } catch (e: Exception) {
             // Fallback: simple JAR-based signing using the PKCS12 testkey
-            log("[APK] ApkSigner not available, using fallback JAR signing…")
+            log("[APK] ApkSigner not available (Reason: ${e.message}), using fallback JAR signing…")
             signWithJarSigner(unsignedApk, signedApk)
         }
     }
@@ -98,7 +98,7 @@ class ApkPackager(
         try {
             // Load the private key and certificate
             val ks = java.security.KeyStore.getInstance("PKCS12")
-            // Read PEM/DER key — use BouncyCastle (scpkix-jdk15on) if available
+            // Read PEM/DER key
             val pkBytes = pk8.readBytes()
             val keySpec = java.security.spec.PKCS8EncodedKeySpec(pkBytes)
             val privateKey = java.security.KeyFactory.getInstance("RSA").generatePrivate(keySpec)
