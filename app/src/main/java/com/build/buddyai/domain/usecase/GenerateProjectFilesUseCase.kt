@@ -18,6 +18,7 @@ class GenerateProjectFilesUseCase @Inject constructor(
         projectDir.mkdirs()
 
         extractGradleWrapper(projectDir)
+        copyBuildToolsStubs(projectDir)
 
         when (project.template) {
             ProjectTemplate.BLANK_COMPOSE -> generateComposeProject(projectDir, project)
@@ -453,5 +454,14 @@ android.nonTransitiveRClass=true
         copyAssetFile("gradle_wrapper/gradle/libs.versions.toml", File(dir, "gradle/libs.versions.toml"))
         copyAssetFile("gradle_wrapper/gradle/wrapper/gradle-wrapper.jar", File(dir, "gradle/wrapper/gradle-wrapper.jar"))
         copyAssetFile("gradle_wrapper/gradle/wrapper/gradle-wrapper.properties", File(dir, "gradle/wrapper/gradle-wrapper.properties"))
+    }
+
+    /**
+     * Copies build tools stubs needed for on-device compilation.
+     */
+    fun copyBuildToolsStubs(dir: File) {
+        val buildToolsDir = File(dir, "build_tools")
+        buildToolsDir.mkdirs()
+        copyAssetFile("build_tools/javax-lang-model-stubs.jar", File(buildToolsDir, "javax-lang-model-stubs.jar"))
     }
 }

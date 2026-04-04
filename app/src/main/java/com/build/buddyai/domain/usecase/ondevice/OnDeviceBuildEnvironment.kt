@@ -28,6 +28,8 @@ object OnDeviceBuildEnvironment {
         private set
     lateinit var coreLambdaStubsJar: File
         private set
+    lateinit var javaxLangModelStubsJar: File
+        private set
     lateinit var testkeyDir: File
         private set
 
@@ -52,6 +54,9 @@ object OnDeviceBuildEnvironment {
 
             coreLambdaStubsJar = File(toolsDir, "core-lambda-stubs.jar")
             extractAsset(context, "$ASSETS_PREFIX/core-lambda-stubs.jar", coreLambdaStubsJar)
+
+            javaxLangModelStubsJar = File(toolsDir, "javax-lang-model-stubs.jar")
+            extractAsset(context, "$ASSETS_PREFIX/javax-lang-model-stubs.jar", javaxLangModelStubsJar)
 
             val testkeyZip = File(toolsDir, "testkey.zip")
             testkeyDir = File(toolsDir, "testkey")

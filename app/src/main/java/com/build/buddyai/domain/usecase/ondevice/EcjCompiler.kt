@@ -40,9 +40,19 @@ class EcjCompiler(
             return
         }
 
-        // Build classpath: android.jar + lambda stubs + any extra jars
+        // Build classpath: android.jar + lambda stubs + javax.lang.model stubs + any extra jars
         val classpathParts = mutableListOf(androidJar.absolutePath)
         if (coreLambdaStubsJar.exists()) classpathParts += coreLambdaStubsJar.absolutePath
+        
+        // Add javax.lang.model stubs for ECJ runtime compatibility
+        val javaxStubsJar = File(projectDir, ".build/tools/javax-lang-model-stubs.jar")
+        javaxStubsJar.parentFile?.mkdirs()
+        val projectStubsJar = File(projectDir, "build_tools/javax-lang-model-stubs.jar")
+        if (projectStubsJar.exists()) {
+            projectStubsJar.copyTo(javaxStubsJar, overwrite = true)
+            classpathParts += javaxStubsJar.absolutePath
+        }
+        
         extraClasspathJars.filter { it.exists() }.forEach { classpathParts += it.absolutePath }
         val classpath = classpathParts.joinToString(":")
 

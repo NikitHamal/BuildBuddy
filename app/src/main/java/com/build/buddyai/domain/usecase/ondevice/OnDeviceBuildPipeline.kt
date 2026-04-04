@@ -40,6 +40,13 @@ class OnDeviceBuildPipeline(
         val classOutputDir = File(buildDir, "classes").also { it.mkdirs() }
         val dexOutputDir = File(buildDir, "dex").also { it.mkdirs() }
         val genDir = File(buildDir, "gen").also { it.mkdirs() }
+        
+        // Copy javax.lang.model stubs to project build tools for ECJ
+        val projectBuildTools = File(projectDir, "build_tools").also { it.mkdirs() }
+        val projectStubsJar = File(projectBuildTools, "javax-lang-model-stubs.jar")
+        if (!projectStubsJar.exists() && env.javaxLangModelStubsJar.exists()) {
+            env.javaxLangModelStubsJar.copyTo(projectStubsJar)
+        }
 
         // Parse project metadata
         val packageName = resolvePackageName(projectDir)
