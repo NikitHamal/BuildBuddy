@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -255,7 +256,7 @@ private fun DiffReviewCard(
     NvCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(NvSpacing.Sm)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.DifferenceOutlined, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(NvSpacing.Xs))
                 Text("${diffs.size} file(s) to update", style = MaterialTheme.typography.titleSmall)
             }

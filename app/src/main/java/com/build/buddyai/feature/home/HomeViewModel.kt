@@ -44,7 +44,14 @@ class HomeViewModel @Inject constructor(
                 projectRepository.getProjectCount(),
                 _searchQuery,
                 _sortMode
-            ) { allProjects, recent, builds, count, query, sort ->
+            ) { values: Array<Any> ->
+                val allProjects = values[0] as List<Project>
+                val recent = values[1] as List<Project>
+                val builds = values[2] as List<BuildRecord>
+                val count = values[3] as Int
+                val query = values[4] as String
+                val sort = values[5] as SortMode
+
                 val filtered = if (query.isBlank()) allProjects
                 else allProjects.filter {
                     it.name.contains(query, ignoreCase = true) ||
