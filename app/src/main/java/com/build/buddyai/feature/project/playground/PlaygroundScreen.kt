@@ -50,10 +50,10 @@ fun PlaygroundScreen(
                         Icon(Icons.Filled.Psychology, contentDescription = "AI Agent")
                     }
                     IconButton(onClick = onNavigateToModels) {
-                        Icon(Icons.Filled.Settings, contentDescription = null)
+                        Icon(Icons.Filled.Key, contentDescription = "AI Providers")
                     }
                     IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = null)
+                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
                 }
             )
