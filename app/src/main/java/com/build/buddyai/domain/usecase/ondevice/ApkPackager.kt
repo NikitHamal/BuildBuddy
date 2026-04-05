@@ -168,14 +168,15 @@ class ApkPackager(
 
             // Use apksig library to sign the APK
             val signerConfig = ApkSigner.SignerConfig.Builder("testkey", privateKey, listOf(cert))
-                .setV1SigningEnabled(true)
-                .setV2SigningEnabled(true)
                 .build()
 
             log("[APK] Starting APK signing with apksig library...")
             ApkSigner.Builder(listOf(signerConfig))
                 .setInputApk(unsignedApk)
                 .setOutputApk(signedApk)
+                .setV1SigningEnabled(false)  // Disable JAR signing, only use v2/v3 APK signatures
+                .setV2SigningEnabled(true)
+                .setV3SigningEnabled(true)
                 .build()
                 .sign()
 
