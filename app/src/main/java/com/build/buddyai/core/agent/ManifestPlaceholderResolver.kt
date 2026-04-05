@@ -27,7 +27,7 @@ class ManifestPlaceholderResolver @Inject constructor() {
             put("versionCode", (buildProfile.versionCodeOverride ?: 1).toString())
             putAll(buildProfile.manifestPlaceholders)
         }
-        val placeholderPattern = Regex("""\$\{([A-Za-z0-9_.-]+)}""")
+        val placeholderPattern = Regex("""\$\{([A-Za-z0-9_.-]+)\}""")
         val unresolved = mutableSetOf<String>()
         val warnings = mutableListOf<String>()
         val resolvedManifest = placeholderPattern.replace(manifestText) { match ->

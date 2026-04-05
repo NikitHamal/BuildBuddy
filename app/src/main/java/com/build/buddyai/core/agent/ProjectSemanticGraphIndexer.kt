@@ -117,7 +117,7 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
                         .forEach { add(ManifestComponent(kind, it.groupValues[1])) }
                 }
             },
-            placeholders = Regex("""\$\{([A-Za-z0-9_.-]+)}""").findAll(manifestText).map { it.groupValues[1] }.distinct().toList()
+            placeholders = Regex("""\$\{([A-Za-z0-9_.-]+)\}""").findAll(manifestText).map { it.groupValues[1] }.distinct().toList()
         )
 
         val resDir = File(projectDir, "app/src/main/res")

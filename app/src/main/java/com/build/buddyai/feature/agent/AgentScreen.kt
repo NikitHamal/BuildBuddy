@@ -18,6 +18,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.History
@@ -75,6 +80,7 @@ import com.build.buddyai.core.designsystem.theme.NvSpacing
 import com.build.buddyai.core.model.AgentAutonomyMode
 import com.build.buddyai.core.model.AiModel
 import com.build.buddyai.core.model.AiProvider
+import com.build.buddyai.core.model.ProblemSeverity
 import com.build.buddyai.feature.agent.components.AgentPromptBar
 
 @Composable

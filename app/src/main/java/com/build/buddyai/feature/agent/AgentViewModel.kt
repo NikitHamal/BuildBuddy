@@ -162,6 +162,16 @@ class AgentViewModel @Inject constructor(
         }
     }
 
+    private fun observeSettings() {
+        settingsJob?.cancel()
+        settingsJob = viewModelScope.launch {
+            settingsDataStore.settings.collectLatest { settings ->
+                _uiState.update { it.copy(autonomyMode = settings.autonomyMode) }
+                loadProviderState()
+            }
+        }
+    }
+
     private fun loadProviderState() {
         viewModelScope.launch {
             val provider = providerRepository.getDefaultProvider()
