@@ -51,12 +51,18 @@
 -dontwarn com.google.crypto.tink.**
 
 # ECJ (Eclipse Java Compiler) - on-device build pipeline
+# CRITICAL: ECJ must NOT be minified or obfuscated!
+# ECJ's internal classes rely on resource bundle lookups and static initializers.
+# R8 obfuscation breaks these lookups causing ExceptionInInitializerError on Android.
+# Sketchware Pro avoids this by bundling ECJ as pre-dexed classes4.dex.
+-keep class org.eclipse.jdt.** { *; }
+-dontwarn org.eclipse.jdt.**
+
 # ECJ references JDK and JDT Core APIs that don't exist on Android.
 # We only use ECJ's batch compiler at runtime, so all missing references are safe to suppress.
 -dontwarn javax.tools.**
 -dontwarn javax.annotation.processing.**
 -dontwarn com.sun.source.**
--dontwarn org.eclipse.jdt.core.**
 -dontwarn org.eclipse.jdt.internal.compiler.apt.**
 -dontwarn org.eclipse.jdt.internal.compiler.tool.**
 -dontwarn org.eclipse.jdt.internal.compiler.ISourceElementRequestor
@@ -66,9 +72,6 @@
 
 # Keep javax.lang.model stubs for ECJ runtime
 -keep class javax.lang.model.** { *; }
-
-# Keep only the ECJ batch compiler entry point used at runtime
--keep class org.eclipse.jdt.internal.compiler.batch.Main { *; }
 
 # D8/R8 compiler (runs in-process on the device)
 -keep class com.android.tools.r8.** { *; }
