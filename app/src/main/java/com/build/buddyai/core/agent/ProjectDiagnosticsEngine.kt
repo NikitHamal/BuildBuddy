@@ -41,7 +41,7 @@ class ProjectDiagnosticsEngine @Inject constructor(
                 problems += BuildProblem(
                     severity = ProblemSeverity.ERROR,
                     title = "Manifest placeholder unresolved",
-                    detail = "No value was provided for \\${$key} in the active build profile.",
+                    detail = "No value was provided for \${$key} in the active build profile.",
                     filePath = "app/src/main/AndroidManifest.xml"
                 )
             }
