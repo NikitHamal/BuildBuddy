@@ -1,5 +1,6 @@
 package com.build.buddyai.core.network
 
+import android.util.Base64
 import com.build.buddyai.core.model.ProviderType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -23,6 +24,7 @@ import okhttp3.Response
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -41,7 +43,7 @@ class AiStreamingService @Inject constructor(
         providerType: ProviderType,
         apiKey: String,
         modelId: String,
-        messages: List<Map<String, String>>,
+        messages: List<AiChatMessage>,
         temperature: Float = 0.7f,
         maxTokens: Int = 4096,
         topP: Float = 0.9f
@@ -94,9 +96,7 @@ class AiStreamingService @Inject constructor(
                         ProviderType.NVIDIA, ProviderType.OPENROUTER, ProviderType.PAXSENIX -> extractChatCompletionsDelta(data)
                         ProviderType.GEMINI -> extractGeminiDelta(data)
                     }
-                    if (!token.isNullOrEmpty()) {
-                        trySend(StreamEvent.Token(token))
-                    }
+                    if (!token.isNullOrEmpty()) trySend(StreamEvent.Token(token))
                 } catch (e: Exception) {
                     trySend(StreamEvent.Error("Malformed stream payload: ${e.message}"))
                 }
@@ -117,12 +117,30 @@ class AiStreamingService @Inject constructor(
         awaitClose { eventSource.cancel() }
     }.flowOn(Dispatchers.IO)
 
+    fun streamMessage(
+        providerType: ProviderType,
+        apiKey: String,
+        modelId: String,
+        messages: List<Map<String, String>>,
+        temperature: Float = 0.7f,
+        maxTokens: Int = 4096,
+        topP: Float = 0.9f
+    ): Flow<StreamEvent> = streamMessage(
+        providerType = providerType,
+        apiKey = apiKey,
+        modelId = modelId,
+        messages = messages.map { AiChatMessage(role = it["role"].orEmpty(), text = it["content"].orEmpty()) },
+        temperature = temperature,
+        maxTokens = maxTokens,
+        topP = topP
+    )
+
     private fun buildChatCompletionsStreamRequest(
         baseUrl: String,
         apiKeyHeader: String,
         apiKeyValue: String,
         modelId: String,
-        messages: List<Map<String, String>>,
+        messages: List<AiChatMessage>,
         temperature: Float,
         maxTokens: Int,
         topP: Float,
@@ -131,12 +149,7 @@ class AiStreamingService @Inject constructor(
         val body = buildJsonObject {
             put("model", modelId)
             putJsonArray("messages") {
-                messages.forEach { msg ->
-                    add(buildJsonObject {
-                        put("role", msg["role"])
-                        put("content", msg["content"].orEmpty())
-                    })
-                }
+                messages.forEach { msg -> add(openAiMessage(msg)) }
             }
             put("temperature", temperature)
             put("max_tokens", maxTokens)
@@ -156,28 +169,27 @@ class AiStreamingService @Inject constructor(
     private fun buildGeminiStreamRequest(
         apiKey: String,
         modelId: String,
-        messages: List<Map<String, String>>,
+        messages: List<AiChatMessage>,
         temperature: Float,
         maxTokens: Int,
         topP: Float
     ): Request {
-        val systemInstruction = messages.filter { it["role"] == "system" }
-            .joinToString("\n\n") { it["content"].orEmpty() }
+        val systemInstruction = messages.filter { it.role == "system" }
+            .joinToString("\n\n") { it.text }
             .trim()
         val body = buildJsonObject {
             if (systemInstruction.isNotBlank()) {
                 putJsonObject("systemInstruction") {
-                    putJsonArray("parts") {
-                        add(buildJsonObject { put("text", systemInstruction) })
-                    }
+                    putJsonArray("parts") { add(buildJsonObject { put("text", systemInstruction) }) }
                 }
             }
             putJsonArray("contents") {
-                messages.filter { it["role"] != "system" }.forEach { msg ->
+                messages.filter { it.role != "system" }.forEach { msg ->
                     add(buildJsonObject {
-                        put("role", if (msg["role"] == "assistant") "model" else "user")
+                        put("role", if (msg.role == "assistant") "model" else "user")
                         putJsonArray("parts") {
-                            add(buildJsonObject { put("text", msg["content"].orEmpty()) })
+                            if (msg.text.isNotBlank()) add(buildJsonObject { put("text", msg.text) })
+                            msg.imagePaths.forEach { path -> add(geminiInlineImagePart(path)) }
                         }
                     })
                 }
@@ -197,11 +209,41 @@ class AiStreamingService @Inject constructor(
             .build()
     }
 
+    private fun openAiMessage(message: AiChatMessage) = buildJsonObject {
+        put("role", message.role)
+        if (message.imagePaths.isEmpty()) {
+            put("content", message.text)
+        } else {
+            putJsonArray("content") {
+                if (message.text.isNotBlank()) add(buildJsonObject {
+                    put("type", "text")
+                    put("text", message.text)
+                })
+                message.imagePaths.forEach { path ->
+                    add(buildJsonObject {
+                        put("type", "image_url")
+                        putJsonObject("image_url") { put("url", fileToDataUrl(path)) }
+                    })
+                }
+            }
+        }
+    }
+
+    private fun geminiInlineImagePart(path: String) = buildJsonObject {
+        putJsonObject("inlineData") {
+            put("mimeType", mimeTypeFor(path))
+            put("data", Base64.encodeToString(File(path).readBytes(), Base64.NO_WRAP))
+        }
+    }
+
     private fun extractChatCompletionsDelta(data: String): String? {
         val jsonData = json.parseToJsonElement(data).jsonObject
         return jsonData["choices"]?.jsonArray?.firstOrNull()?.jsonObject
             ?.get("delta")?.jsonObject
-            ?.get("content")?.jsonPrimitive?.contentOrNull
+            ?.get("content")?.let { content ->
+                if (content is kotlinx.serialization.json.JsonPrimitive) content.contentOrNull
+                else content.toString()
+            }
     }
 
     private fun extractGeminiDelta(data: String): String? {
@@ -211,6 +253,18 @@ class AiStreamingService @Inject constructor(
             ?.get("parts")?.jsonArray
             ?.joinToString(separator = "") { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull.orEmpty() }
             ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun fileToDataUrl(path: String): String {
+        val bytes = File(path).readBytes()
+        return "data:${mimeTypeFor(path)};base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+    }
+
+    private fun mimeTypeFor(path: String): String = when (path.substringAfterLast('.', "").lowercase()) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "webp" -> "image/webp"
+        else -> "application/octet-stream"
     }
 
     private companion object {

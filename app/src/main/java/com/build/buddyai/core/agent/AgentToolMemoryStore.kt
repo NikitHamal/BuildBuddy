@@ -4,8 +4,6 @@ import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.decodeFromString
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -35,13 +33,13 @@ class AgentToolMemoryStore @Inject constructor(
 
     private fun load(projectId: String): List<ToolMemoryEntry> {
         val file = File(context.filesDir, "agent_tool_memory/$projectId.json")
-        return if (!file.exists()) emptyList() else runCatching { json.decodeFromString<List<ToolMemoryEntry>>(file.readText()) }.getOrDefault(emptyList())
+        return if (!file.exists()) emptyList() else runCatching { json.decodeFromString(file.readText()) }.getOrDefault(emptyList())
     }
 
     private fun save(projectId: String, entries: List<ToolMemoryEntry>) {
         val file = File(context.filesDir, "agent_tool_memory/$projectId.json")
         file.parentFile?.mkdirs()
-        file.writeText(json.encodeToString<List<ToolMemoryEntry>>(entries))
+        file.writeText(json.encodeToString(entries))
     }
 
     @Serializable

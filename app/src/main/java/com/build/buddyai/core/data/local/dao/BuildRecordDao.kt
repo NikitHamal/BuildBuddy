@@ -9,6 +9,9 @@ interface BuildRecordDao {
     @Query("SELECT * FROM build_records WHERE projectId = :projectId ORDER BY startedAt DESC")
     fun getBuildRecordsByProject(projectId: String): Flow<List<BuildRecordEntity>>
 
+    @Query("SELECT * FROM build_records WHERE projectId = :projectId ORDER BY startedAt DESC")
+    suspend fun getBuildRecordsByProjectNow(projectId: String): List<BuildRecordEntity>
+
     @Query("SELECT * FROM build_records ORDER BY startedAt DESC LIMIT :limit")
     fun getRecentBuildRecords(limit: Int = 10): Flow<List<BuildRecordEntity>>
 
@@ -23,4 +26,7 @@ interface BuildRecordDao {
 
     @Query("DELETE FROM build_records WHERE projectId = :projectId")
     suspend fun deleteRecordsByProject(projectId: String)
+
+    @Query("DELETE FROM build_records")
+    suspend fun clearAllRecords()
 }

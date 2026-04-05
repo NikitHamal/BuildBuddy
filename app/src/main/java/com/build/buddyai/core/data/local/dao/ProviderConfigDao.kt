@@ -26,4 +26,7 @@ interface ProviderConfigDao {
 
     @Query("UPDATE provider_configs SET isDefault = 0")
     suspend fun clearAllDefaults()
+
+    @Query("DELETE FROM provider_configs")
+    suspend fun clearAllProviderConfigs()
 }

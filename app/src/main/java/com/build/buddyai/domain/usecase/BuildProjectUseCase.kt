@@ -4,6 +4,7 @@ import android.content.Context
 import com.build.buddyai.core.common.BuildCancellationRegistry
 import com.build.buddyai.core.common.BuildProfileManager
 import com.build.buddyai.core.model.BuildLogEntry
+import com.build.buddyai.core.model.ArtifactFormat
 import com.build.buddyai.core.model.BuildProfile
 import com.build.buddyai.core.model.LogLevel
 import com.build.buddyai.core.model.Project
@@ -50,6 +51,15 @@ class BuildProjectUseCase @Inject constructor(
                 onEvent(BuildEvent.Warning(warning))
             }
 
+            if (buildProfile.artifactFormat == ArtifactFormat.AAB) {
+                onEvent(
+                    BuildEvent.Failure(
+                        "AAB export is configured in the build profile, but the local bundle toolchain is not bundled in this on-device engine yet. Switch the artifact format to APK for now."
+                    )
+                )
+                return@withContext
+            }
+
             if (buildProfile.variant.name == "RELEASE") {
                 val signing = buildProfile.signing
                 val secrets = buildProfileManager.getSigningSecrets(project.id)
@@ -70,7 +80,7 @@ class BuildProjectUseCase @Inject constructor(
                 BuildEvent.Log(
                     logEntry(
                         LogLevel.INFO,
-                        "Build engine: AAPT2 + ECJ + D8 (no JDK required) • variant=${buildProfile.variant.name.lowercase(Locale.US)}"
+                        "Build engine: AAPT2 + ECJ + D8 (no JDK required) • variant=${buildProfile.variant.name.lowercase(Locale.US)} • artifact=${buildProfile.artifactFormat.extension} • flavor=${buildProfile.flavorName.ifBlank { "main" }}"
                     )
                 )
             )

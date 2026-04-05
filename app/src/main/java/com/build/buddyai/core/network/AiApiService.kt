@@ -5,6 +5,7 @@ import com.build.buddyai.core.model.ModelMetadataRegistry
 import com.build.buddyai.core.model.ProviderType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import android.util.Base64
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -19,6 +20,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -68,10 +70,10 @@ class AiApiService @Inject constructor(
     suspend fun testConnection(providerType: ProviderType, apiKey: String): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
             val request = when (providerType) {
-                ProviderType.NVIDIA -> buildNvidiaRequest(apiKey, "meta/llama-3.1-8b-instruct", listOf(mapOf("role" to "user", "content" to "hi")), 0.1f, 5, 1f)
-                ProviderType.OPENROUTER -> buildOpenRouterRequest(apiKey, "meta-llama/llama-3.1-8b-instruct:free", listOf(mapOf("role" to "user", "content" to "hi")), 0.1f, 5, 1f)
-                ProviderType.GEMINI -> buildGeminiRequest(apiKey, "gemini-1.5-flash", listOf(mapOf("role" to "user", "content" to "hi")), 0.1f, 5, 1f)
-                ProviderType.PAXSENIX -> buildPaxsenixRequest(apiKey, "gpt-4o", listOf(mapOf("role" to "user", "content" to "hi")), 0.1f, 5, 1f)
+                ProviderType.NVIDIA -> buildNvidiaRequest(apiKey, "meta/llama-3.1-8b-instruct", listOf(AiChatMessage("user", "hi")), 0.1f, 5, 1f)
+                ProviderType.OPENROUTER -> buildOpenRouterRequest(apiKey, "meta-llama/llama-3.1-8b-instruct:free", listOf(AiChatMessage("user", "hi")), 0.1f, 5, 1f)
+                ProviderType.GEMINI -> buildGeminiRequest(apiKey, "gemini-1.5-flash", listOf(AiChatMessage("user", "hi")), 0.1f, 5, 1f)
+                ProviderType.PAXSENIX -> buildPaxsenixRequest(apiKey, "gpt-4o", listOf(AiChatMessage("user", "hi")), 0.1f, 5, 1f)
             }
 
             client.newCall(request).execute().use { response ->
@@ -90,7 +92,7 @@ class AiApiService @Inject constructor(
         providerType: ProviderType,
         apiKey: String,
         modelId: String,
-        messages: List<Map<String, String>>,
+        messages: List<AiChatMessage>,
         temperature: Float = 0.7f,
         maxTokens: Int = 4096,
         topP: Float = 0.9f
@@ -115,10 +117,28 @@ class AiApiService @Inject constructor(
         }
     }
 
-    private fun buildNvidiaRequest(
+    suspend fun sendMessage(
+        providerType: ProviderType,
         apiKey: String,
         modelId: String,
         messages: List<Map<String, String>>,
+        temperature: Float = 0.7f,
+        maxTokens: Int = 4096,
+        topP: Float = 0.9f
+    ): Result<String> = sendMessage(
+        providerType = providerType,
+        apiKey = apiKey,
+        modelId = modelId,
+        messages = messages.map { AiChatMessage(role = it["role"].orEmpty(), text = it["content"].orEmpty()) },
+        temperature = temperature,
+        maxTokens = maxTokens,
+        topP = topP
+    )
+
+    private fun buildNvidiaRequest(
+        apiKey: String,
+        modelId: String,
+        messages: List<AiChatMessage>,
         temperature: Float,
         maxTokens: Int,
         topP: Float
@@ -132,7 +152,7 @@ class AiApiService @Inject constructor(
     private fun buildOpenRouterRequest(
         apiKey: String,
         modelId: String,
-        messages: List<Map<String, String>>,
+        messages: List<AiChatMessage>,
         temperature: Float,
         maxTokens: Int,
         topP: Float
@@ -148,7 +168,7 @@ class AiApiService @Inject constructor(
     private fun buildGeminiRequest(
         apiKey: String,
         modelId: String,
-        messages: List<Map<String, String>>,
+        messages: List<AiChatMessage>,
         temperature: Float,
         maxTokens: Int,
         topP: Float
@@ -162,7 +182,7 @@ class AiApiService @Inject constructor(
     private fun buildPaxsenixRequest(
         apiKey: String,
         modelId: String,
-        messages: List<Map<String, String>>,
+        messages: List<AiChatMessage>,
         temperature: Float,
         maxTokens: Int,
         topP: Float
@@ -175,7 +195,7 @@ class AiApiService @Inject constructor(
 
     private fun buildChatCompletionsBody(
         modelId: String,
-        messages: List<Map<String, String>>,
+        messages: List<AiChatMessage>,
         temperature: Float,
         maxTokens: Int,
         topP: Float
@@ -183,10 +203,7 @@ class AiApiService @Inject constructor(
         put("model", modelId)
         putJsonArray("messages") {
             messages.forEach { message ->
-                add(buildJsonObject {
-                    put("role", message["role"])
-                    put("content", message["content"].orEmpty())
-                })
+                add(openAiMessage(message))
             }
         }
         put("temperature", temperature)
@@ -195,13 +212,13 @@ class AiApiService @Inject constructor(
     }
 
     private fun buildGeminiBody(
-        messages: List<Map<String, String>>,
+        messages: List<AiChatMessage>,
         temperature: Float,
         maxTokens: Int,
         topP: Float
     ) = buildJsonObject {
-        val systemInstruction = messages.filter { it["role"] == "system" }
-            .joinToString("\n\n") { it["content"].orEmpty() }
+        val systemInstruction = messages.filter { it.role == "system" }
+            .joinToString("\n\n") { it.text }
             .trim()
         if (systemInstruction.isNotBlank()) {
             putJsonObject("systemInstruction") {
@@ -211,11 +228,12 @@ class AiApiService @Inject constructor(
             }
         }
         putJsonArray("contents") {
-            messages.filter { it["role"] != "system" }.forEach { message ->
+            messages.filter { it.role != "system" }.forEach { message ->
                 add(buildJsonObject {
-                    put("role", if (message["role"] == "assistant") "model" else "user")
+                    put("role", if (message.role == "assistant") "model" else "user")
                     putJsonArray("parts") {
-                        add(buildJsonObject { put("text", message["content"].orEmpty()) })
+                        if (message.text.isNotBlank()) add(buildJsonObject { put("text", message.text) })
+                        message.imagePaths.forEach { path -> add(geminiInlineImagePart(path)) }
                     }
                 })
             }
@@ -225,6 +243,49 @@ class AiApiService @Inject constructor(
             put("maxOutputTokens", maxTokens)
             put("topP", topP)
         }
+    }
+
+
+    private fun openAiMessage(message: AiChatMessage) = buildJsonObject {
+        put("role", message.role)
+        if (message.imagePaths.isEmpty()) {
+            put("content", message.text)
+        } else {
+            putJsonArray("content") {
+                if (message.text.isNotBlank()) add(buildJsonObject {
+                    put("type", "text")
+                    put("text", message.text)
+                })
+                message.imagePaths.forEach { path ->
+                    add(buildJsonObject {
+                        put("type", "image_url")
+                        putJsonObject("image_url") {
+                            put("url", fileToDataUrl(path))
+                        }
+                    })
+                }
+            }
+        }
+    }
+
+    private fun geminiInlineImagePart(path: String) = buildJsonObject {
+        putJsonObject("inlineData") {
+            put("mimeType", mimeTypeFor(path))
+            put("data", Base64.encodeToString(File(path).readBytes(), Base64.NO_WRAP))
+        }
+    }
+
+    private fun fileToDataUrl(path: String): String {
+        val file = File(path)
+        val bytes = file.readBytes()
+        return "data:${mimeTypeFor(path)};base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+    }
+
+    private fun mimeTypeFor(path: String): String = when (path.substringAfterLast('.', "").lowercase()) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "webp" -> "image/webp"
+        else -> "application/octet-stream"
     }
 
     private fun parseModels(providerType: ProviderType, body: String): List<AiModel> {

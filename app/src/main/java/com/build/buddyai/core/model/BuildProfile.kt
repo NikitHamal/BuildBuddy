@@ -6,13 +6,26 @@ import kotlinx.serialization.Serializable
 data class BuildProfile(
     val variant: BuildVariant = BuildVariant.DEBUG,
     val installAfterBuild: Boolean = true,
-    val signing: SigningConfig? = null
+    val signing: SigningConfig? = null,
+    val artifactFormat: ArtifactFormat = ArtifactFormat.APK,
+    val flavorName: String = "main",
+    val applicationIdSuffix: String = "",
+    val versionNameSuffix: String = "",
+    val versionCodeOverride: Int? = null,
+    val versionNameOverride: String? = null,
+    val manifestPlaceholders: Map<String, String> = emptyMap()
 )
 
 @Serializable
 enum class BuildVariant(val displayName: String) {
     DEBUG("Debug"),
     RELEASE("Release")
+}
+
+@Serializable
+enum class ArtifactFormat(val displayName: String, val extension: String) {
+    APK("APK", "apk"),
+    AAB("Android App Bundle", "aab")
 }
 
 @Serializable

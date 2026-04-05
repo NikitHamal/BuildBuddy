@@ -15,6 +15,10 @@ interface ProjectDao {
     @Query("SELECT * FROM projects WHERE id = :id")
     suspend fun getProjectById(id: String): ProjectEntity?
 
+    @Query("SELECT * FROM projects")
+    suspend fun getAllProjectsNow(): List<ProjectEntity>
+
+
     @Query("SELECT * FROM projects WHERE id = :id")
     fun observeProject(id: String): Flow<ProjectEntity?>
 
@@ -32,6 +36,9 @@ interface ProjectDao {
 
     @Query("DELETE FROM projects WHERE id = :id")
     suspend fun deleteProjectById(id: String)
+
+    @Query("DELETE FROM projects")
+    suspend fun clearAllProjects()
 
     @Query("SELECT COUNT(*) FROM projects")
     fun getProjectCount(): Flow<Int>

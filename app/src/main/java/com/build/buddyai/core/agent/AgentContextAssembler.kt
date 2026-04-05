@@ -1,11 +1,13 @@
 package com.build.buddyai.core.agent
 
+import com.build.buddyai.core.model.BuildRecord
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class AgentContextAssembler @Inject constructor(
+    private val semanticGraphIndexer: ProjectSemanticGraphIndexer,
     private val symbolIndexer: ProjectSymbolIndexer,
     private val failureMemoryStore: ProjectFailureMemoryStore,
     private val toolMemoryStore: AgentToolMemoryStore
@@ -16,17 +18,23 @@ class AgentContextAssembler @Inject constructor(
         val containsKotlinSources: Boolean,
         val includedFiles: List<String>,
         val omittedFiles: List<String>,
-        val symbolSummary: String
+        val symbolSummary: String,
+        val graphSummary: String
     )
 
     fun assemble(
         projectId: String,
         projectDir: File,
         attachedFiles: List<String>,
+        focusHint: String,
+        buildHistory: List<BuildRecord>,
         maxChars: Int = 120_000
     ): ProjectContextSnapshot {
-        val normalizedAttached = attachedFiles.map { it.replace('\\', '/').trimStart('/') }.distinct()
+        val normalizedAttached = attachedFiles
+            .mapNotNull { normalizeProjectRelative(projectDir, it) }
+            .distinct()
         val symbolIndex = symbolIndexer.index(projectDir)
+        val semanticGraph = semanticGraphIndexer.index(projectDir, focusHint = focusHint, buildHistory = buildHistory)
         val allFiles = projectDir.walkTopDown()
             .filter { it.isFile }
             .filterNot { isExcluded(projectDir, it) }
@@ -41,7 +49,8 @@ class AgentContextAssembler @Inject constructor(
             add("gradle.properties")
             add("app/build.gradle.kts")
             add("app/src/main/AndroidManifest.xml")
-            addAll(symbolIndex.symbols.take(50).map { it.filePath })
+            addAll(semanticGraph.candidateFiles)
+            addAll(symbolIndex.symbols.take(40).map { it.filePath })
         }
 
         val orderedFiles = buildList {
@@ -63,7 +72,10 @@ class AgentContextAssembler @Inject constructor(
         }
 
         appendChunk("Project root: ${projectDir.absolutePath}\n")
+        appendChunk("User focus: $focusHint\n\n")
         appendChunk("Project file tree:\n$fileTree\n\n")
+        appendChunk(semanticGraph.summary())
+        appendChunk("\n\n")
         appendChunk(symbolIndex.toPrompt())
         appendChunk("\n\n")
         appendChunk(failureMemoryStore.summarize(projectId))
@@ -107,8 +119,23 @@ class AgentContextAssembler @Inject constructor(
             containsKotlinSources = containsKotlinSources,
             includedFiles = included,
             omittedFiles = omitted,
-            symbolSummary = symbolIndex.toPrompt()
+            symbolSummary = symbolIndex.toPrompt(),
+            graphSummary = semanticGraph.summary()
         )
+    }
+
+    private fun normalizeProjectRelative(projectDir: File, path: String): String? {
+        return runCatching {
+            val raw = path.replace('\\', '/').trim()
+            if (raw.startsWith("/")) {
+                val file = File(raw).canonicalFile
+                if (file.path.startsWith(projectDir.canonicalPath + File.separator)) {
+                    file.relativeTo(projectDir.canonicalFile).invariantSeparatorsPath
+                } else null
+            } else {
+                raw.trimStart('/').takeIf { it.isNotBlank() }
+            }
+        }.getOrNull()
     }
 
     private fun isExcluded(projectDir: File, file: File): Boolean {

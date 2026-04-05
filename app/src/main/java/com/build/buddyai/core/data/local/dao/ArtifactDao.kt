@@ -27,4 +27,7 @@ interface ArtifactDao {
 
     @Query("DELETE FROM artifacts WHERE projectId = :projectId")
     suspend fun deleteArtifactsByProject(projectId: String)
+
+    @Query("DELETE FROM artifacts")
+    suspend fun clearAllArtifacts()
 }

@@ -5,6 +5,9 @@ import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.build.buddyai.core.agent.AgentChangeSetManager
+import com.build.buddyai.core.common.ArtifactProvenance
+import com.build.buddyai.core.common.ArtifactProvenanceStore
 import com.build.buddyai.core.common.BuildArtifactInstaller
 import com.build.buddyai.core.common.BuildCancellationRegistry
 import com.build.buddyai.core.common.BuildForegroundService
@@ -13,6 +16,7 @@ import com.build.buddyai.core.common.SnapshotManager
 import com.build.buddyai.core.data.repository.ArtifactRepository
 import com.build.buddyai.core.data.repository.BuildRepository
 import com.build.buddyai.core.data.repository.ProjectRepository
+import com.build.buddyai.core.model.ArtifactFormat
 import com.build.buddyai.core.model.BuildArtifact
 import com.build.buddyai.core.model.BuildLogEntry
 import com.build.buddyai.core.model.BuildProblem
@@ -24,7 +28,7 @@ import com.build.buddyai.core.model.BuildVariant
 import com.build.buddyai.core.model.LogLevel
 import com.build.buddyai.core.model.ProblemSeverity
 import com.build.buddyai.core.model.RestorePoint
-import com.build.buddyai.core.model.SigningConfig
+import com.build.buddyai.core.problems.ProjectProblemsService
 import com.build.buddyai.domain.usecase.BuildProjectUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -38,7 +42,6 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
-
 
 data class BuildUiState(
     val isBuilding: Boolean = false,
@@ -55,6 +58,7 @@ data class BuildUiState(
     val problems: List<BuildProblem> = emptyList(),
     val timeline: List<BuildTimelineEntry> = emptyList(),
     val latestArtifact: BuildArtifact? = null,
+    val artifactProvenance: ArtifactProvenance? = null,
     val restorePoints: List<RestorePoint> = emptyList()
 )
 
@@ -68,6 +72,9 @@ class BuildViewModel @Inject constructor(
     private val buildProfileManager: BuildProfileManager,
     private val snapshotManager: SnapshotManager,
     private val buildArtifactInstaller: BuildArtifactInstaller,
+    private val problemsService: ProjectProblemsService,
+    private val provenanceStore: ArtifactProvenanceStore,
+    private val changeSetManager: AgentChangeSetManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -78,6 +85,7 @@ class BuildViewModel @Inject constructor(
     private var buildJob: Job? = null
     private var buildHistoryJob: Job? = null
     private var artifactsJob: Job? = null
+    private var problemsJob: Job? = null
 
     fun initialize(projectId: String) {
         currentProjectId = projectId
@@ -98,6 +106,7 @@ class BuildViewModel @Inject constructor(
         }
         observeBuildHistory(projectId)
         observeArtifacts(projectId)
+        observeProblems(projectId)
     }
 
     private fun observeBuildHistory(projectId: String) {
@@ -118,21 +127,46 @@ class BuildViewModel @Inject constructor(
         artifactsJob?.cancel()
         artifactsJob = viewModelScope.launch {
             artifactRepository.getArtifactsByProject(projectId).collectLatest { artifacts ->
-                _uiState.update { it.copy(latestArtifact = artifacts.firstOrNull()) }
+                val latest = artifacts.firstOrNull()
+                _uiState.update {
+                    it.copy(
+                        latestArtifact = latest,
+                        artifactProvenance = latest?.let { artifact -> provenanceStore.load(artifact.id) }
+                    )
+                }
             }
         }
     }
 
-    fun updateVariant(variant: BuildVariant) {
-        val projectId = currentProjectId ?: return
-        val updated = _uiState.value.buildProfile.copy(variant = variant)
-        saveProfile(projectId, updated)
+    private fun observeProblems(projectId: String) {
+        problemsJob?.cancel()
+        problemsJob = viewModelScope.launch {
+            problemsService.observe(projectId).collectLatest { problems ->
+                _uiState.update { it.copy(problems = problems) }
+            }
+        }
     }
 
-    fun updateInstallAfterBuild(enabled: Boolean) {
-        val projectId = currentProjectId ?: return
-        val updated = _uiState.value.buildProfile.copy(installAfterBuild = enabled)
-        saveProfile(projectId, updated)
+    fun updateVariant(variant: BuildVariant) = updateProfile { copy(variant = variant) }
+    fun updateArtifactFormat(format: ArtifactFormat) = updateProfile { copy(artifactFormat = format) }
+    fun updateInstallAfterBuild(enabled: Boolean) = updateProfile { copy(installAfterBuild = enabled) }
+    fun updateFlavorName(name: String) = updateProfile { copy(flavorName = name.trim()) }
+    fun updateApplicationIdSuffix(value: String) = updateProfile { copy(applicationIdSuffix = value.trim()) }
+    fun updateVersionNameSuffix(value: String) = updateProfile { copy(versionNameSuffix = value.trim()) }
+    fun updateVersionNameOverride(value: String) = updateProfile { copy(versionNameOverride = value.trim().ifBlank { null }) }
+    fun updateVersionCodeOverride(value: String) = updateProfile { copy(versionCodeOverride = value.trim().toIntOrNull()) }
+
+    fun updateManifestPlaceholders(raw: String) {
+        val parsed = raw.lineSequence()
+            .map { it.trim() }
+            .filter { it.contains('=') }
+            .associate {
+                val key = it.substringBefore('=').trim()
+                val value = it.substringAfter('=').trim()
+                key to value
+            }
+            .filterKeys { it.isNotBlank() }
+        updateProfile { copy(manifestPlaceholders = parsed) }
     }
 
     fun updateSigningAlias(alias: String) {
@@ -174,6 +208,7 @@ class BuildViewModel @Inject constructor(
 
             val snapshot = snapshotManager.createSnapshot(projectId, File(project.projectPath), "pre_build")
             refreshRestorePoints()
+            problemsService.clear(projectId)
 
             _uiState.update {
                 it.copy(
@@ -189,7 +224,7 @@ class BuildViewModel @Inject constructor(
                     problems = emptyList(),
                     timeline = listOf(
                         BuildTimelineEntry(label = "Restore point", detail = "Created ${snapshot.name}", status = com.build.buddyai.core.model.ActionStatus.COMPLETED),
-                        BuildTimelineEntry(label = "Build", detail = "Starting ${buildProfile.variant.displayName.lowercase()} build", status = com.build.buddyai.core.model.ActionStatus.IN_PROGRESS)
+                        BuildTimelineEntry(label = "Build", detail = "Starting ${buildProfile.variant.displayName.lowercase()} ${buildProfile.artifactFormat.displayName} build", status = com.build.buddyai.core.model.ActionStatus.IN_PROGRESS)
                     )
                 )
             }
@@ -221,10 +256,12 @@ class BuildViewModel @Inject constructor(
                         _uiState.update { state -> state.copy(logEntries = state.logEntries + event.entry) }
                     }
                     is BuildProjectUseCase.BuildEvent.Warning -> {
+                        val updatedProblems = _uiState.value.problems + BuildProblem(ProblemSeverity.WARNING, "Build warning", event.message)
+                        problemsService.replace(projectId, updatedProblems)
                         _uiState.update { state ->
                             state.copy(
                                 compatibilityWarnings = state.compatibilityWarnings + event.message,
-                                problems = state.problems + BuildProblem(ProblemSeverity.WARNING, "Build warning", event.message)
+                                problems = updatedProblems
                             )
                         }
                     }
@@ -249,24 +286,40 @@ class BuildViewModel @Inject constructor(
                             fileName = File(event.artifactPath).name,
                             sizeBytes = event.artifactSize,
                             packageName = project.packageName,
-                            versionName = "1.0.0",
-                            versionCode = 1,
+                            versionName = buildProfile.versionNameOverride ?: "1.0.0${buildProfile.versionNameSuffix}",
+                            versionCode = buildProfile.versionCodeOverride ?: 1,
                             createdAt = completedAt,
                             minSdk = project.minSdk,
                             targetSdk = project.targetSdk
                         )
                         artifactRepository.insertArtifact(artifact)
+                        val provenance = ArtifactProvenance.from(
+                            artifactId = artifact.id,
+                            artifactPath = artifact.filePath,
+                            projectId = projectId,
+                            projectName = project.name,
+                            buildRecord = completedRecord,
+                            buildProfile = buildProfile,
+                            changeSetIds = changeSetManager.list(projectId).take(10).map { it.id },
+                            warnings = _uiState.value.compatibilityWarnings,
+                            problems = _uiState.value.problems,
+                            timeline = _uiState.value.timeline.map { "${it.label}: ${it.detail}" },
+                            templateOrigin = project.template.displayName,
+                            validationSummary = _uiState.value.problems.joinToString(" | ") { it.title }.ifBlank { "Validation passed" }
+                        )
+                        provenanceStore.save(provenance)
                         _uiState.update {
                             it.copy(
                                 isBuilding = false,
                                 buildProgress = 1f,
                                 buildStatus = BuildStatus.SUCCESS,
                                 statusMessage = "Build successful",
-                                latestArtifact = artifact
+                                latestArtifact = artifact,
+                                artifactProvenance = provenance
                             )
                         }
                         addTimeline("Artifact", "Built ${artifact.fileName}")
-                        if (buildProfile.installAfterBuild) {
+                        if (buildProfile.installAfterBuild && buildProfile.artifactFormat == ArtifactFormat.APK) {
                             when (val result = buildArtifactInstaller.install(context, File(artifact.filePath))) {
                                 is BuildArtifactInstaller.InstallResult.Started -> addTimeline("Install", "Installer opened")
                                 is BuildArtifactInstaller.InstallResult.PermissionRequired -> addTimeline("Install", result.message, isError = true)
@@ -285,13 +338,15 @@ class BuildViewModel @Inject constructor(
                         )
                         buildRepository.updateBuildRecord(failedRecord)
                         projectRepository.updateProject(project.copy(lastBuildStatus = BuildStatus.FAILED, lastBuildAt = completedAt))
+                        val parsedProblems = parseProblems(event.error, _uiState.value.logEntries)
+                        problemsService.replace(projectId, parsedProblems)
                         _uiState.update {
                             it.copy(
                                 isBuilding = false,
                                 buildStatus = BuildStatus.FAILED,
                                 statusMessage = "Build failed",
                                 errorSummary = event.error,
-                                problems = parseProblems(event.error, it.logEntries)
+                                problems = parsedProblems
                             )
                         }
                         addTimeline("Build", event.error, isError = true)
@@ -381,6 +436,11 @@ class BuildViewModel @Inject constructor(
                 }
             )
         }
+    }
+
+    private fun updateProfile(transform: BuildProfile.() -> BuildProfile) {
+        val projectId = currentProjectId ?: return
+        saveProfile(projectId, _uiState.value.buildProfile.transform())
     }
 
     private fun saveProfile(

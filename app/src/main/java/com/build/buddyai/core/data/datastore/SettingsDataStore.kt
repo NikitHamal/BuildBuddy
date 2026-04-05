@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import com.build.buddyai.core.model.AgentAutonomyMode
 import com.build.buddyai.core.model.AppSettings
 import com.build.buddyai.core.model.ThemeMode
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -27,6 +28,7 @@ class SettingsDataStore @Inject constructor(
         val EDITOR_AUTOSAVE = booleanPreferencesKey("editor_autosave")
         val BUILD_NOTIFICATIONS = booleanPreferencesKey("build_notifications")
         val BUILD_CACHE_ENABLED = booleanPreferencesKey("build_cache_enabled")
+        val AUTONOMY_MODE = stringPreferencesKey("autonomy_mode")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val DEFAULT_PROVIDER_ID = stringPreferencesKey("default_provider_id")
         val DEFAULT_MODEL_ID = stringPreferencesKey("default_model_id")
@@ -42,6 +44,7 @@ class SettingsDataStore @Inject constructor(
             editorAutosave = prefs[Keys.EDITOR_AUTOSAVE] ?: true,
             buildNotifications = prefs[Keys.BUILD_NOTIFICATIONS] ?: true,
             buildCacheEnabled = prefs[Keys.BUILD_CACHE_ENABLED] ?: true,
+            autonomyMode = prefs[Keys.AUTONOMY_MODE]?.let { AgentAutonomyMode.valueOf(it) } ?: AgentAutonomyMode.AUTONOMOUS_SAFE,
             onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: false,
             defaultProviderId = prefs[Keys.DEFAULT_PROVIDER_ID],
             defaultModelId = prefs[Keys.DEFAULT_MODEL_ID]
@@ -56,6 +59,7 @@ class SettingsDataStore @Inject constructor(
     suspend fun updateEditorAutosave(enabled: Boolean) = context.dataStore.edit { it[Keys.EDITOR_AUTOSAVE] = enabled }
     suspend fun updateBuildNotifications(enabled: Boolean) = context.dataStore.edit { it[Keys.BUILD_NOTIFICATIONS] = enabled }
     suspend fun updateBuildCacheEnabled(enabled: Boolean) = context.dataStore.edit { it[Keys.BUILD_CACHE_ENABLED] = enabled }
+    suspend fun updateAutonomyMode(mode: AgentAutonomyMode) = context.dataStore.edit { it[Keys.AUTONOMY_MODE] = mode.name }
     suspend fun setOnboardingCompleted() = context.dataStore.edit { it[Keys.ONBOARDING_COMPLETED] = true }
     suspend fun updateDefaultProvider(providerId: String?) = context.dataStore.edit {
         if (providerId != null) it[Keys.DEFAULT_PROVIDER_ID] = providerId

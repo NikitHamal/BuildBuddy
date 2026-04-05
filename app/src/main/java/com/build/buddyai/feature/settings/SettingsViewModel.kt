@@ -9,8 +9,10 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.build.buddyai.core.common.AppDataManager
 import com.build.buddyai.core.common.FileUtils
 import com.build.buddyai.core.data.datastore.SettingsDataStore
+import com.build.buddyai.core.model.AgentAutonomyMode
 import com.build.buddyai.core.model.AppSettings
 import com.build.buddyai.core.model.ThemeMode
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -21,8 +23,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -34,12 +36,21 @@ sealed class SettingsEvent {
     data class LaunchIntent(val intent: Intent) : SettingsEvent()
 }
 
+data class StorageBucketUi(
+    val scope: AppDataManager.DataScope,
+    val bytes: Long,
+    val formattedSize: String
+)
+
 data class SettingsUiState(
     val settings: AppSettings = AppSettings(),
     val showThemeMenu: Boolean = false,
     val storageUsed: String = "Calculating…",
     val cacheSize: String = "0 B",
+    val storageBuckets: List<StorageBucketUi> = emptyList(),
+    val selectedScopes: Set<AppDataManager.DataScope> = emptySet(),
     val isClearingCache: Boolean = false,
+    val isDeletingData: Boolean = false,
     val isExportingLogs: Boolean = false,
     val lastOperationMessage: String? = null
 )
@@ -47,6 +58,7 @@ data class SettingsUiState(
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val settingsDataStore: SettingsDataStore,
+    private val appDataManager: AppDataManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -64,18 +76,22 @@ class SettingsViewModel @Inject constructor(
                 _uiState.update { it.copy(settings = settings) }
             }
         }
-        updateStorageInfo()
+        refreshStorageInfo()
     }
 
-    private fun updateStorageInfo() {
+    fun refreshStorageInfo() {
         viewModelScope.launch {
-            val total = FileUtils.calculateDirectorySize(context.filesDir) + FileUtils.calculateDirectorySize(context.cacheDir)
-            val cacheDir = FileUtils.getCacheDir(context)
-            val cacheSize = if (cacheDir.exists()) FileUtils.calculateDirectorySize(cacheDir) else 0L
+            val buckets = appDataManager.storageBreakdown()
+            val total = buckets.sumOf { it.bytes }
+            val cacheSize = buckets.firstOrNull { it.scope == AppDataManager.DataScope.CACHE }?.bytes ?: 0L
             _uiState.update {
                 it.copy(
                     storageUsed = FileUtils.formatFileSize(total),
-                    cacheSize = FileUtils.formatFileSize(cacheSize)
+                    cacheSize = FileUtils.formatFileSize(cacheSize),
+                    storageBuckets = buckets.map { bucket ->
+                        StorageBucketUi(bucket.scope, bucket.bytes, FileUtils.formatFileSize(bucket.bytes))
+                    },
+                    selectedScopes = it.selectedScopes.ifEmpty { buckets.map { bucket -> bucket.scope }.toSet() }
                 )
             }
         }
@@ -89,11 +105,54 @@ class SettingsViewModel @Inject constructor(
     fun updateLineNumbers(enabled: Boolean) { viewModelScope.launch { settingsDataStore.updateEditorLineNumbers(enabled) } }
     fun updateAutosave(enabled: Boolean) { viewModelScope.launch { settingsDataStore.updateEditorAutosave(enabled) } }
     fun updateBuildCache(enabled: Boolean) { viewModelScope.launch { settingsDataStore.updateBuildCacheEnabled(enabled) } }
+    fun updateAutonomyMode(mode: AgentAutonomyMode) { viewModelScope.launch { settingsDataStore.updateAutonomyMode(mode) } }
 
     fun updateBuildNotifications(enabled: Boolean) {
         viewModelScope.launch {
             settingsDataStore.updateBuildNotifications(enabled)
             if (enabled) createNotificationChannel()
+        }
+    }
+
+    fun toggleDataScope(scope: AppDataManager.DataScope) {
+        _uiState.update { state ->
+            val selected = state.selectedScopes.toMutableSet()
+            if (!selected.add(scope)) selected.remove(scope)
+            state.copy(selectedScopes = selected)
+        }
+    }
+
+    fun selectAllDataScopes() {
+        _uiState.update { it.copy(selectedScopes = AppDataManager.DataScope.entries.toSet()) }
+    }
+
+    fun clearSelectedData() {
+        val scopes = _uiState.value.selectedScopes
+        if (scopes.isEmpty()) return
+        clearData(scopes)
+    }
+
+    fun clearAllData() {
+        clearData(AppDataManager.DataScope.entries.toSet())
+    }
+
+    private fun clearData(scopes: Set<AppDataManager.DataScope>) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isDeletingData = true) }
+            runCatching {
+                val freed = appDataManager.clear(scopes)
+                refreshStorageInfo()
+                _uiState.update {
+                    it.copy(
+                        isDeletingData = false,
+                        lastOperationMessage = "Deleted ${scopes.size} data scope(s) • ${FileUtils.formatFileSize(freed)} freed"
+                    )
+                }
+            }.onFailure { error ->
+                _uiState.update {
+                    it.copy(isDeletingData = false, lastOperationMessage = error.message ?: "Failed to delete data")
+                }
+            }
         }
     }
 
@@ -104,7 +163,7 @@ class SettingsViewModel @Inject constructor(
             val sizeBefore = if (cacheDir.exists()) FileUtils.calculateDirectorySize(cacheDir) else 0L
             cacheDir.deleteRecursively()
             cacheDir.mkdirs()
-            updateStorageInfo()
+            refreshStorageInfo()
             _uiState.update {
                 it.copy(
                     isClearingCache = false,

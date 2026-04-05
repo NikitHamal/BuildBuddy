@@ -8,8 +8,6 @@ import com.build.buddyai.core.model.SigningConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.decodeFromString
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
@@ -33,7 +31,7 @@ class BuildProfileManager @Inject constructor(
     fun saveProfile(projectId: String, profile: BuildProfile, storePassword: String? = null, keyPassword: String? = null) {
         profileFile(projectId).apply {
             parentFile?.mkdirs()
-            writeText(json.encodeToString<StoredProfile>(StoredProfile.fromModel(profile)))
+            writeText(json.encodeToString(StoredProfile.fromModel(profile)))
         }
         storePassword?.takeIf { it.isNotBlank() }?.let { secureKeyStore.storeApiKey("sign_store_$projectId", it) }
         keyPassword?.takeIf { it.isNotBlank() }?.let { secureKeyStore.storeApiKey("sign_key_$projectId", it) }
@@ -75,15 +73,40 @@ class BuildProfileManager @Inject constructor(
     private data class StoredProfile(
         val variant: BuildVariant = BuildVariant.DEBUG,
         val installAfterBuild: Boolean = true,
-        val signing: SigningConfig? = null
+        val signing: SigningConfig? = null,
+        val artifactFormat: com.build.buddyai.core.model.ArtifactFormat = com.build.buddyai.core.model.ArtifactFormat.APK,
+        val flavorName: String = "main",
+        val applicationIdSuffix: String = "",
+        val versionNameSuffix: String = "",
+        val versionCodeOverride: Int? = null,
+        val versionNameOverride: String? = null,
+        val manifestPlaceholders: Map<String, String> = emptyMap()
     ) {
-        fun toModel() = BuildProfile(variant = variant, installAfterBuild = installAfterBuild, signing = signing)
+        fun toModel() = BuildProfile(
+            variant = variant,
+            installAfterBuild = installAfterBuild,
+            signing = signing,
+            artifactFormat = artifactFormat,
+            flavorName = flavorName,
+            applicationIdSuffix = applicationIdSuffix,
+            versionNameSuffix = versionNameSuffix,
+            versionCodeOverride = versionCodeOverride,
+            versionNameOverride = versionNameOverride,
+            manifestPlaceholders = manifestPlaceholders
+        )
 
         companion object {
             fun fromModel(profile: BuildProfile) = StoredProfile(
                 variant = profile.variant,
                 installAfterBuild = profile.installAfterBuild,
-                signing = profile.signing
+                signing = profile.signing,
+                artifactFormat = profile.artifactFormat,
+                flavorName = profile.flavorName,
+                applicationIdSuffix = profile.applicationIdSuffix,
+                versionNameSuffix = profile.versionNameSuffix,
+                versionCodeOverride = profile.versionCodeOverride,
+                versionNameOverride = profile.versionNameOverride,
+                manifestPlaceholders = profile.manifestPlaceholders
             )
         }
     }

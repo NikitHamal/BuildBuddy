@@ -7,7 +7,6 @@ import com.build.buddyai.core.model.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -65,8 +64,8 @@ class ChatRepository @Inject constructor(
                 id = message.id, sessionId = message.sessionId,
                 role = message.role.name, content = message.content,
                 timestamp = message.timestamp, status = message.status.name,
-                actionsJson = json.encodeToString<List<AgentAction>>(message.actions),
-                attachedFilesJson = json.encodeToString<List<String>>(message.attachedFiles),
+                actionsJson = json.encodeToString(message.actions),
+                attachedFilesJson = json.encodeToString(message.attachedFiles),
                 modelId = message.modelId, tokenCount = message.tokenCount
             )
         )
@@ -78,18 +77,18 @@ class ChatRepository @Inject constructor(
                 id = message.id, sessionId = message.sessionId,
                 role = message.role.name, content = message.content,
                 timestamp = message.timestamp, status = message.status.name,
-                actionsJson = json.encodeToString<List<AgentAction>>(message.actions),
-                attachedFilesJson = json.encodeToString<List<String>>(message.attachedFiles),
+                actionsJson = json.encodeToString(message.actions),
+                attachedFilesJson = json.encodeToString(message.attachedFiles),
                 modelId = message.modelId, tokenCount = message.tokenCount
             )
         )
     }
 
     private fun deserializeActions(actionsJson: String): List<AgentAction> {
-        return try { json.decodeFromString<List<AgentAction>>(actionsJson) } catch (_: Exception) { emptyList() }
+        return try { json.decodeFromString(actionsJson) } catch (_: Exception) { emptyList() }
     }
 
     private fun deserializeFiles(filesJson: String): List<String> {
-        return try { json.decodeFromString<List<String>>(filesJson) } catch (_: Exception) { emptyList() }
+        return try { json.decodeFromString(filesJson) } catch (_: Exception) { emptyList() }
     }
 }

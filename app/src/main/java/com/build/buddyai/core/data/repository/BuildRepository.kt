@@ -29,6 +29,9 @@ class BuildRepository @Inject constructor(
     suspend fun getBuildRecordById(id: String): BuildRecord? =
         buildRecordDao.getBuildRecordById(id)?.toBuildRecord { logs -> deserializeLogs(logs) }
 
+    suspend fun getBuildRecordsByProjectNow(projectId: String): List<BuildRecord> =
+        buildRecordDao.getBuildRecordsByProjectNow(projectId).map { it.toBuildRecord { logs -> deserializeLogs(logs) } }
+
     suspend fun insertBuildRecord(record: BuildRecord) {
         buildRecordDao.insertBuildRecord(
             BuildRecordEntity.fromBuildRecord(record) { logs -> serializeLogs(logs) }
