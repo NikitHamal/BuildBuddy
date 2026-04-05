@@ -39,7 +39,7 @@ class ManifestPlaceholderResolver @Inject constructor() {
         }
 
         if (buildProfile.applicationIdSuffix.isNotBlank() && !manifestText.contains("\${applicationId}")) {
-            warnings += "Application ID suffix is configured, but the manifest does not reference \\${applicationId}. The on-device engine will preserve the base package for validation builds."
+            warnings += "Application ID suffix is configured, but the manifest does not reference \${applicationId}. The on-device engine will preserve the base package for validation builds."
         }
 
         return ValidationResult(
