@@ -84,14 +84,14 @@ object ProjectIntegrityVerifier {
             if (file.hasConstraintLayout) {
                 issues += IntegrityIssue(
                     IntegrityLevel.WARNING,
-                    "ConstraintLayout resources require the Gradle build path. The legacy AAPT2 linker cannot resolve layout_constraint attributes without AndroidX resource dependencies.",
+                    "ConstraintLayout resources need the Gradle build path because layout_constraint attributes come from AndroidX resources.",
                     file.path
                 )
             }
             if (file.tags.any { it.startsWith("androidx.") || it.startsWith("com.google.android.material") }) {
                 issues += IntegrityIssue(
                     IntegrityLevel.WARNING,
-                    "AndroidX/Material XML widgets require the Gradle build path with dependency resources available.",
+                    "AndroidX or Material XML widgets need the Gradle build path with dependency resources available.",
                     file.path
                 )
             }
@@ -112,13 +112,13 @@ object ProjectIntegrityVerifier {
         if ((preferredEngine == "gradle" || index.hasKotlin || index.hasCompose) && !index.hasGradleWrapper) {
             issues += IntegrityIssue(
                 IntegrityLevel.ERROR,
-                "Gradle validation was selected but the Gradle wrapper is missing. Restore gradlew and gradle/wrapper before building."
+                "Gradle build is required but the Gradle wrapper is missing. Restore gradlew and gradle/wrapper before building."
             )
         }
-        if (preferredEngine == "legacy" && index.hasKotlin) {
+        if (preferredEngine == "legacy" && (index.hasKotlin || index.hasCompose)) {
             issues += IntegrityIssue(
-                IntegrityLevel.ERROR,
-                "This project is marked for legacy validation but contains Kotlin sources. Switch the preferred build engine to gradle or remove Kotlin sources."
+                IntegrityLevel.WARNING,
+                "Project metadata still points at the Java on-device build path, but Kotlin or Compose sources are present. BuildBuddy will prefer the Gradle path for this project."
             )
         }
 

@@ -11,9 +11,12 @@ private val METHOD_REGEX = Regex("""\b(public|protected|private)?\s*(static\s+)?
 private val XML_ID_REGEX = Regex("""android:id="@\+id/([A-Za-z0-9_]+)"""")
 private val XML_TAG_REGEX = Regex("""<([A-Za-z0-9._]+)(\s|>)""")
 private val MANIFEST_ACTIVITY_REGEX = Regex("""<activity[^>]*android:name="([^"]+)"""")
+private val MANIFEST_PACKAGE_REGEX = Regex("""package\s*=\s*"([A-Za-z0-9_.]+)"""")
 private val NAMESPACE_REGEX = Regex("""namespace\s*=\s*"([A-Za-z0-9_.]+)"""")
 private val APPLICATION_ID_REGEX = Regex("""applicationId\s*=\s*"([A-Za-z0-9_.]+)"""")
 private val RES_NAME_REGEX = Regex("""^[a-z0-9_]+$""")
+private val RESOURCE_REF_REGEX = Regex("""R\.(layout|string|id|drawable|color|menu|xml)\.([A-Za-z0-9_]+)""")
+private val TOOLS_CONTEXT_REGEX = Regex("""tools:context="([^"]+)"""")
 
 data class IndexedFile(
     val path: String,
@@ -44,13 +47,15 @@ data class ProjectSymbolIndex(
     val hasKotlin: Boolean,
     val hasCompose: Boolean,
     val hasGradleWrapper: Boolean,
-    val invalidResourceNames: List<String>
+    val invalidResourceNames: List<String>,
+    val projectGraph: ProjectGraph
 ) {
-    fun summary(maxFiles: Int = 16, maxSymbols: Int = 32): String = buildString {
+    fun summary(maxFiles: Int = 16, maxSymbols: Int = 32, maxEdges: Int = 20): String = buildString {
         appendLine("Indexed files: ${files.size}")
         appendLine("Kotlin sources: ${if (hasKotlin) "yes" else "no"}")
         appendLine("Compose usage: ${if (hasCompose) "yes" else "no"}")
         appendLine("Gradle wrapper: ${if (hasGradleWrapper) "present" else "missing"}")
+        appendLine("Project graph edges: ${projectGraph.edges.size}")
         listOfNotNull(
             manifestPackageName?.let { "Manifest package: $it" },
             gradleNamespace?.let { "Gradle namespace: $it" },
@@ -74,6 +79,13 @@ data class ProjectSymbolIndex(
                 .take(maxSymbols)
                 .forEach { symbol -> appendLine("- ${symbol.kind}: ${symbol.name} (${symbol.filePath})") }
         }
+        if (projectGraph.edges.isNotEmpty()) {
+            appendLine()
+            appendLine("Key graph edges:")
+            projectGraph.edges.take(maxEdges).forEach { edge ->
+                appendLine("- ${edge.kind}: ${edge.fromPath} -> ${edge.toPath}${edge.symbol?.let { " [$it]" } ?: ""}")
+            }
+        }
     }.trim()
 
     fun selectFocusFiles(
@@ -84,34 +96,47 @@ data class ProjectSymbolIndex(
     ): List<String> {
         val requestedTokens = tokenize(userRequest)
         val preferred = (preferredFiles + attachedFiles)
-            .mapNotNull { raw ->
-                runCatching { FileUtils.normalizeRelativePath(raw) }.getOrNull()
-            }
+            .mapNotNull { raw -> runCatching { FileUtils.normalizeRelativePath(raw) }.getOrNull() }
             .distinct()
-        val scored = files.map { file ->
+
+        val baseScores = files.associate { file ->
             val pathTokens = tokenize(file.path)
             val symbolTokens = file.symbols.flatMap(::tokenize)
             val importTokens = file.imports.flatMap(::tokenize)
             var score = 0
-            if (preferred.contains(file.path)) score += 500
+            if (preferred.contains(file.path)) score += 600
             requestedTokens.forEach { token ->
                 if (file.path.contains(token, ignoreCase = true)) score += 40
                 if (pathTokens.contains(token)) score += 24
                 if (symbolTokens.contains(token)) score += 20
-                if (importTokens.contains(token)) score += 8
-                if (file.packageName?.contains(token, ignoreCase = true) == true) score += 10
-                if (file.resourceIds.any { it.contains(token, ignoreCase = true) }) score += 10
-                if (file.tags.any { it.contains(token, ignoreCase = true) }) score += 6
+                if (importTokens.contains(token)) score += 10
+                if (file.packageName?.contains(token, ignoreCase = true) == true) score += 12
+                if (file.resourceIds.any { it.contains(token, ignoreCase = true) }) score += 12
+                if (file.tags.any { it.contains(token, ignoreCase = true) }) score += 8
             }
             if (file.path == "app/src/main/AndroidManifest.xml") score += 25
             if (file.path.endsWith("build.gradle.kts") || file.path.endsWith("settings.gradle.kts")) score += 20
             if (file.path.endsWith("activity_main.xml")) score += 15
-            file to score
+            file.path to score
         }
-            .sortedWith(compareByDescending<Pair<IndexedFile, Int>> { it.second }.thenBy { it.first.path })
-            .map { it.first.path }
 
-        return (preferred + scored)
+        val seeds = (preferred + baseScores.entries.sortedByDescending { it.value }.take(6).map { it.key }).distinct()
+        val neighborBoosts = mutableMapOf<String, Int>()
+        seeds.forEach { seed ->
+            projectGraph.neighbors(seed).forEach { edge ->
+                neighborBoosts[edge.toPath] = neighborBoosts.getOrDefault(edge.toPath, 0) + when (edge.kind) {
+                    "manifest-entry", "layout-usage", "tools-context" -> 80
+                    "import", "resource-usage" -> 48
+                    else -> 24
+                }
+            }
+        }
+
+        return files
+            .map { file -> file.path to ((baseScores[file.path] ?: 0) + neighborBoosts.getOrDefault(file.path, 0)) }
+            .sortedWith(compareByDescending<Pair<String, Int>> { it.second }.thenBy { it.first })
+            .map { it.first }
+            .let { preferred + it }
             .distinct()
             .take(limit)
     }
@@ -135,6 +160,7 @@ data class ProjectSymbolIndex(
                 .sortedBy { it.relativeTo(canonicalRoot).invariantSeparatorsPath }
                 .toList()
 
+            val textByPath = mutableMapOf<String, String>()
             val indexedFiles = mutableListOf<IndexedFile>()
             val symbols = mutableListOf<SymbolOccurrence>()
             val invalidResourceNames = mutableListOf<String>()
@@ -149,6 +175,7 @@ data class ProjectSymbolIndex(
                 val relative = file.relativeTo(canonicalRoot).invariantSeparatorsPath
                 val extension = file.extension.lowercase()
                 val text = runCatching { file.readText() }.getOrDefault("")
+                textByPath[relative] = text
                 if (text.isBlank() && extension !in setOf("properties", "pro", "toml")) return@forEach
 
                 if (relative.startsWith("app/src/main/res/")) {
@@ -160,12 +187,12 @@ data class ProjectSymbolIndex(
 
                 when (relative) {
                     "app/src/main/AndroidManifest.xml" -> {
-                        manifestPackage = Regex("""package\s*=\s*"([A-Za-z0-9_.]+)"""")
-                            .find(text)?.groupValues?.getOrNull(1)
+                        manifestPackage = MANIFEST_PACKAGE_REGEX.find(text)?.groupValues?.getOrNull(1)
                         launcherActivities += MANIFEST_ACTIVITY_REGEX.findAll(text)
                             .mapNotNull { it.groupValues.getOrNull(1) }
                             .toList()
                     }
+
                     "app/build.gradle.kts", "app/build.gradle" -> {
                         gradleNamespace = NAMESPACE_REGEX.find(text)?.groupValues?.getOrNull(1) ?: gradleNamespace
                         applicationId = APPLICATION_ID_REGEX.find(text)?.groupValues?.getOrNull(1) ?: applicationId
@@ -222,6 +249,72 @@ data class ProjectSymbolIndex(
                 )
             }
 
+            val symbolFileByQualifiedName = indexedFiles.flatMap { file ->
+                file.symbols.mapNotNull { symbol ->
+                    val pkg = file.packageName ?: return@mapNotNull null
+                    "$pkg.$symbol" to file.path
+                }
+            }.toMap()
+            val symbolFileBySimpleName = indexedFiles.flatMap { file -> file.symbols.map { it to file.path } }
+                .groupBy({ it.first }, { it.second })
+
+            val resourcePathByKey = indexedFiles.mapNotNull { file ->
+                if (!file.path.startsWith("app/src/main/res/")) return@mapNotNull null
+                val parts = file.path.split('/')
+                val dir = parts.getOrNull(parts.indexOf("res") + 1) ?: return@mapNotNull null
+                val type = dir.substringBefore('-')
+                "$type/${File(file.path).nameWithoutExtension}" to file.path
+            }.toMap()
+
+            fun resolveActivityPath(activityName: String): String? {
+                val fqcn = when {
+                    activityName.startsWith(".") && manifestPackage != null -> "$manifestPackage$activityName"
+                    '.' !in activityName && manifestPackage != null -> "$manifestPackage.$activityName"
+                    else -> activityName
+                }
+                val simple = fqcn.substringAfterLast('.')
+                return symbolFileByQualifiedName[fqcn] ?: symbolFileBySimpleName[simple]?.firstOrNull()
+            }
+
+            val edges = mutableListOf<ProjectGraphEdge>()
+            indexedFiles.forEach { file ->
+                val text = textByPath[file.path].orEmpty()
+                file.imports.forEach { imported ->
+                    val target = symbolFileByQualifiedName[imported] ?: symbolFileBySimpleName[imported.substringAfterLast('.')]
+                        ?.firstOrNull()
+                    if (target != null && target != file.path) {
+                        edges += ProjectGraphEdge(file.path, target, "import", imported)
+                    }
+                }
+                RESOURCE_REF_REGEX.findAll(text).forEach { match ->
+                    val type = match.groupValues.getOrNull(1).orEmpty()
+                    val name = match.groupValues.getOrNull(2).orEmpty()
+                    val target = resourcePathByKey["$type/$name"]
+                    if (target != null) {
+                        edges += ProjectGraphEdge(file.path, target, if (type == "layout") "layout-usage" else "resource-usage", "R.$type.$name")
+                    }
+                }
+                if (file.path == "app/src/main/AndroidManifest.xml") {
+                    launcherActivities.forEach { activity ->
+                        resolveActivityPath(activity)?.let { target ->
+                            edges += ProjectGraphEdge(file.path, target, "manifest-entry", activity)
+                        }
+                    }
+                }
+                if (file.path.startsWith("app/src/main/res/layout/")) {
+                    TOOLS_CONTEXT_REGEX.find(text)?.groupValues?.getOrNull(1)?.let { contextValue ->
+                        resolveActivityPath(contextValue)?.let { target ->
+                            edges += ProjectGraphEdge(file.path, target, "tools-context", contextValue)
+                        }
+                    }
+                }
+                if (file.path == "app/build.gradle.kts" || file.path == "app/build.gradle") {
+                    if (manifestPackage != null) {
+                        edges += ProjectGraphEdge(file.path, "app/src/main/AndroidManifest.xml", "build-config", manifestPackage)
+                    }
+                }
+            }
+
             return ProjectSymbolIndex(
                 files = indexedFiles,
                 symbols = symbols,
@@ -232,7 +325,8 @@ data class ProjectSymbolIndex(
                 hasKotlin = hasKotlin,
                 hasCompose = hasCompose,
                 hasGradleWrapper = File(canonicalRoot, "gradlew").exists() && File(canonicalRoot, "gradle/wrapper/gradle-wrapper.jar").exists(),
-                invalidResourceNames = invalidResourceNames.distinct().sorted()
+                invalidResourceNames = invalidResourceNames.distinct().sorted(),
+                projectGraph = ProjectGraph(edges.distinct())
             )
         }
 
@@ -240,5 +334,6 @@ data class ProjectSymbolIndex(
             .lowercase()
             .split(Regex("[^a-z0-9]+"))
             .filter { it.length >= 2 }
+
     }
 }

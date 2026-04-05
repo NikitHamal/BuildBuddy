@@ -41,7 +41,7 @@ class GenerateProjectFilesUseCase @Inject constructor(
         val pkgPath = project.packageName.replace('.', '/')
         val srcDir = File(dir, "app/src/main/java/$pkgPath").apply { mkdirs() }
         File(srcDir, "MainActivity.kt").writeText(
-            composeMainActivity(project, "BuildBuddy delivers real Android apps. Start by editing the action cards and replace the sample data with product logic.")
+            composeBlankActivity(project)
         )
         writeComposeTheme(dir, project)
         writeBaseStrings(dir, project)
@@ -81,19 +81,18 @@ class GenerateProjectFilesUseCase @Inject constructor(
         TextView subtitle = findViewById(R.id.screenSubtitle);
         TextView status = findViewById(R.id.statusValue);
         Button primary = findViewById(R.id.primaryActionButton);
-        Button secondary = findViewById(R.id.secondaryActionButton);
 
-        title.setText("Ship your first production screen");
-        subtitle.setText("This starter intentionally uses build-safe Android Views so the on-device validator can compile it without dependency resource issues.");
-        status.setText("Workspace ready");
+        title.setText("${project.name}");
+        subtitle.setText("Blank Java starter using only build-safe Android Views.");
+        status.setText("Ready");
 
-        primary.setOnClickListener(v -> status.setText("Primary action tapped"));
-        secondary.setOnClickListener(v -> status.setText("Secondary action tapped"));
+        primary.setText("Update status");
+        primary.setOnClickListener(v -> status.setText("Updated at " + System.currentTimeMillis()));
             """.trimIndent())
         )
         File(dir, "app/src/main/res/layout/activity_main.xml").apply {
             parentFile?.mkdirs()
-            writeText(baseDashboardLayout(project.name))
+            writeText(blankViewsLayout(project.name))
         }
     }
 
@@ -316,7 +315,6 @@ android.nonTransitiveRClass=true
         val properties = Properties().apply {
             setProperty("template", project.template.name)
             setProperty("preferredBuildEngine", project.template.preferredBuildEngine.name.lowercase())
-            setProperty("validatedStarter", project.template.validationLabel)
         }
         File(dir, "buildbuddy.properties").outputStream().use { properties.store(it, "BuildBuddy project metadata") }
     }
@@ -457,6 +455,68 @@ fun AppTheme(
             """.trimIndent()
         )
     }
+
+    private fun composeBlankActivity(project: Project): String =
+        """
+package ${project.packageName}
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import ${project.packageName}.ui.theme.AppTheme
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            AppTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    MainScreen()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MainScreen() {
+    val status = remember { mutableStateOf("Ready") }
+    Scaffold(topBar = { TopAppBar(title = { Text("${project.name}") }) }) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text("Blank Kotlin starter", style = MaterialTheme.typography.headlineSmall)
+            Text("Start from a clean screen and replace this placeholder text with your real product UI.", style = MaterialTheme.typography.bodyLarge)
+            Text("Status: ${'$'}{status.value}", style = MaterialTheme.typography.bodyMedium)
+            Button(onClick = { status.value = "Updated" }, modifier = Modifier.fillMaxWidth()) {
+                Text("Update status")
+            }
+        }
+    }
+}
+        """.trimIndent()
 
     private fun composeMainActivity(project: Project, heroText: String): String =
         """
@@ -655,6 +715,66 @@ public class MainActivity extends Activity {
 $afterSetContent
     }
 }
+        """.trimIndent()
+
+    private fun blankViewsLayout(appName: String): String =
+        """
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bb_screen"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                android:id="@+id/screenTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="$appName"
+                android:textColor="@color/bb_text_primary"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/screenSubtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:textColor="@color/bb_text_secondary"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/statusValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:textColor="@color/bb_text_primary"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/primaryActionButton"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_primary_button"
+            android:text="Primary"
+            android:textColor="@android:color/white" />
+    </LinearLayout>
+</ScrollView>
         """.trimIndent()
 
     private fun baseDashboardLayout(appName: String): String =

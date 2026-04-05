@@ -28,7 +28,7 @@ class AgentContextAssembler @Inject constructor() {
             userRequest = userRequest,
             attachedFiles = attachedFiles,
             preferredFiles = preferredFiles,
-            limit = 12
+            limit = 14
         )
         val fileMap = index.files.associateBy { it.path }
         val importantFiles = listOf(
@@ -53,6 +53,7 @@ class AgentContextAssembler @Inject constructor() {
         appendChunk("Project root: ${projectDir.absolutePath}\n")
         appendChunk("Indexed project summary:\n${index.summary()}\n\n")
         appendChunk("Focused files for this turn:\n${focusFiles.joinToString("\n").ifBlank { "(none)" }}\n\n")
+        appendChunk("Project graph snapshot:\n${index.projectGraph.summary()}\n\n")
 
         orderedFiles.forEach { relativePath ->
             val indexedFile = fileMap[relativePath] ?: return@forEach

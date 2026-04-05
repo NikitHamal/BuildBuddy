@@ -65,9 +65,9 @@ data class ProjectEntity(
 
         private fun resolveTemplate(raw: String): ProjectTemplate = when (raw) {
             in ProjectTemplate.entries.map { it.name } -> ProjectTemplate.valueOf(raw)
-            "JAVA_ACTIVITY", "JAVA_XML", "JAVA_VIEWS", "LEGACY_JAVA" -> ProjectTemplate.JAVA_DASHBOARD
+            "JAVA_ACTIVITY", "JAVA_XML", "JAVA_VIEWS", "LEGACY_JAVA" -> ProjectTemplate.BLANK_VIEWS
             "EMPTY_ACTIVITY", "BLANK_ACTIVITY", "BASIC_ACTIVITY" -> ProjectTemplate.BLANK_VIEWS
-            "KOTLIN_COMPOSE", "COMPOSE_ACTIVITY", "KOTLIN_ACTIVITY" -> ProjectTemplate.SINGLE_ACTIVITY_COMPOSE
+            "KOTLIN_COMPOSE", "COMPOSE_ACTIVITY", "KOTLIN_ACTIVITY", "BLANK_KOTLIN", "KOTLIN_BLANK" -> ProjectTemplate.BLANK_COMPOSE
             "SETTINGS_COMPOSE", "COMPOSE_PREFERENCES" -> ProjectTemplate.COMPOSE_SETTINGS
             "UTILITY", "JAVA_TOOL" -> ProjectTemplate.BASIC_UTILITY
             "FORM", "JAVA_FORM_SCREEN" -> ProjectTemplate.JAVA_FORM

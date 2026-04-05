@@ -8,6 +8,7 @@ import com.build.buddyai.core.agent.AgentExecutionPlan
 import com.build.buddyai.core.agent.AgentPlannerProtocol
 import com.build.buddyai.core.agent.AgentTaskProtocol
 import com.build.buddyai.core.agent.ProjectSymbolIndex
+import com.build.buddyai.core.agent.StructuredEditEngine
 import com.build.buddyai.core.common.ChangeSetInfo
 import com.build.buddyai.core.common.ChangeSetManager
 import com.build.buddyai.core.common.FileUtils
@@ -257,7 +258,7 @@ class AgentViewModel @Inject constructor(
                     appendLine("Original user request:")
                     appendLine(visibleUserInput)
                     appendLine()
-                    appendLine("The previous automated implementation failed on build validation. Repair the project directly and keep the response actionable.")
+                    appendLine("The previous automated implementation failed on the previous build. Repair the project directly and keep the response actionable.")
                     appendLine()
                     appendLine("Build failure context:")
                     appendLine("```text")
@@ -318,6 +319,7 @@ class AgentViewModel @Inject constructor(
                 "role" to "system",
                 "content" to buildString {
                     appendLine("You are the hidden planner for BuildBuddy. Produce a focused execution plan for the next turn.")
+                    appendLine("Preserve the current language and UI stack unless the user explicitly requests a migration.")
                     appendLine(AgentPlannerProtocol.instructions())
                 }
             ),
@@ -335,7 +337,7 @@ class AgentViewModel @Inject constructor(
                     appendLine("Attached files:")
                     appendLine(attachedFiles.joinToString("\n").ifBlank { "(none)" })
                     appendLine()
-                    appendLine("Project index:")
+                    appendLine("Project index and graph:")
                     appendLine(projectIndex.summary())
                 }
             )
@@ -404,8 +406,12 @@ class AgentViewModel @Inject constructor(
         plan: AgentExecutionPlan
     ) {
         val parsed = AgentTaskProtocol.parse(rawContent)
+        val blockedMigrationReason = detectBlockedStackMigration(project, visibleUserInput, parsed)
+        val resolvedMessage = blockedMigrationReason?.let {
+            "Blocked stack migration. ${it.trim()}"
+        } ?: parsed.displayMessage
         val finalMessage = placeholder.copy(
-            content = parsed.displayMessage,
+            content = resolvedMessage,
             status = MessageStatus.COMPLETE,
             modelId = modelId
         )
@@ -417,6 +423,12 @@ class AgentViewModel @Inject constructor(
             )
         }
 
+        if (blockedMigrationReason != null) {
+            clearActions()
+            persistSystemMessage(sessionId, "BuildBuddy refused to migrate the current ${project.language.displayName}/${project.uiFramework.displayName} stack because the user did not explicitly request a migration.")
+            return
+        }
+
         if (!parsed.isTask) {
             clearActions()
             return
@@ -424,7 +436,7 @@ class AgentViewModel @Inject constructor(
 
         setActions(
             action(AgentActionType.EDITING_FILE, "Applying the implementation"),
-            action(AgentActionType.VERIFYING, if (parsed.shouldBuild || plan.shouldBuild) "Preparing validation build" else "Finishing without validation")
+            action(AgentActionType.VERIFYING, if (parsed.shouldBuild || plan.shouldBuild) "Preparing build" else "Finishing without build")
         )
 
         val diffs = applyAgentOperations(projectDir, parsed)
@@ -433,7 +445,7 @@ class AgentViewModel @Inject constructor(
         if (diffs.isNotEmpty()) {
             changeSetManager.recordChangeSet(
                 projectId = project.id,
-                summary = parsed.displayMessage.ifBlank { plan.summary.ifBlank { visibleUserInput.take(80) } },
+                summary = resolvedMessage.ifBlank { plan.summary.ifBlank { visibleUserInput.take(80) } },
                 source = "agent",
                 diffs = diffs
             )
@@ -468,11 +480,11 @@ class AgentViewModel @Inject constructor(
         )
 
         if (repairAttempt >= 1) {
-            persistSystemMessage(sessionId, "Automatic validation failed after the repair pass. Review the build problems pane and latest logs for the remaining issue.")
+            persistSystemMessage(sessionId, "Automatic build repair stopped after one retry. Review the checks pane and build logs for the remaining issue.")
             return
         }
 
-        persistSystemMessage(sessionId, "Build validation failed, so BuildBuddy is running one automatic repair pass.")
+        persistSystemMessage(sessionId, "Build failed, so BuildBuddy is running one automatic repair pass.")
         executeAutonomousTurn(
             sessionId = sessionId,
             visibleUserInput = visibleUserInput,
@@ -484,6 +496,10 @@ class AgentViewModel @Inject constructor(
 
     private suspend fun applyAgentOperations(projectDir: File, parsed: com.build.buddyai.core.agent.ParsedAgentResponse): List<FileDiff> {
         val diffs = mutableListOf<FileDiff>()
+
+        parsed.edits.forEach { edit ->
+            StructuredEditEngine.apply(projectDir, edit)?.let(diffs::add)
+        }
 
         parsed.deletes.forEach { rawPath ->
             val normalized = normalizePathOrNull(rawPath) ?: return@forEach
@@ -515,7 +531,9 @@ class AgentViewModel @Inject constructor(
             )
         }
 
-        return diffs.sortedBy { it.filePath }
+        return diffs
+            .distinctBy { it.filePath + it.modifiedContent.hashCode() }
+            .sortedBy { it.filePath }
     }
 
     private suspend fun runValidationBuild(project: com.build.buddyai.core.model.Project): BuildOutcome {
@@ -535,7 +553,7 @@ class AgentViewModel @Inject constructor(
         var failureMessage: String? = null
         var cancelled = false
 
-        setActions(action(AgentActionType.BUILDING, "Running validation build"))
+        setActions(action(AgentActionType.BUILDING, "Running build"))
 
         buildProjectUseCase(project, buildId) { event ->
             when (event) {
@@ -716,7 +734,8 @@ class AgentViewModel @Inject constructor(
         executionMemory: String
     ): String = buildString {
         appendLine("You are BuildBuddy, a production Android builder operating inside a sandboxed project.")
-        appendLine("Default behavior: inspect the index, follow the current execution plan, apply full-file updates directly, and validate changes when appropriate.")
+        appendLine("Default behavior: inspect the index and project graph, follow the current execution plan, prefer surgical structured edits for existing files, and validate changes when appropriate.")
+        appendLine("Preserve the project's current language and UI stack unless the user explicitly asks to migrate it.")
         appendLine("Never use placeholders, pseudo-diffs, TODO markers, partial snippets, or write outside the project root.")
         appendLine()
         appendLine("Planner summary: ${plan.summary.ifBlank { "direct implementation pass" }}")
@@ -737,6 +756,7 @@ class AgentViewModel @Inject constructor(
         val state = _uiState.value
         appendLine("Recent diffs: ${state.recentDiffs.take(8).joinToString { it.filePath }.ifBlank { "none" }}")
         appendLine("Latest build summary: ${state.lastBuildSummary ?: "none"}")
+        appendLine("Surgical edit mode: ${if (state.recentDiffs.isEmpty()) "idle" else "active"}")
         if (state.changeSets.isNotEmpty()) {
             appendLine("Recent change sets: ${state.changeSets.take(3).joinToString { it.summary }}")
         }
@@ -771,6 +791,41 @@ class AgentViewModel @Inject constructor(
         } catch (_: IllegalArgumentException) {
             null
         }
+
+    private fun detectBlockedStackMigration(
+        project: com.build.buddyai.core.model.Project,
+        userRequest: String,
+        parsed: com.build.buddyai.core.agent.ParsedAgentResponse
+    ): String? {
+        if (!parsed.isTask || allowsMigration(userRequest)) return null
+        val allPaths = parsed.writes.map { it.path } + parsed.edits.map { it.path } + parsed.deletes
+        val allContent = (parsed.writes.map { it.content } + parsed.edits.mapNotNull { it.content }).joinToString("\n")
+        val introducesKotlin = allPaths.any { it.endsWith(".kt") || it.endsWith(".kts") }
+        val introducesCompose = allContent.contains("@Composable") || allContent.contains("setContent {") || allContent.contains("androidx.compose")
+        return when {
+            project.language == com.build.buddyai.core.model.ProjectLanguage.JAVA && introducesKotlin ->
+                "The agent tried to introduce Kotlin files into a Java project without an explicit migration request."
+            project.uiFramework == com.build.buddyai.core.model.UiFramework.VIEWS && introducesCompose ->
+                "The agent tried to move an Android Views project to Compose without an explicit migration request."
+            else -> null
+        }
+    }
+
+    private fun allowsMigration(userRequest: String): Boolean {
+        val normalized = userRequest.lowercase()
+        return listOf(
+            "migrate",
+            "convert",
+            "rewrite in kotlin",
+            "rewrite to kotlin",
+            "switch to kotlin",
+            "use kotlin",
+            "move to compose",
+            "switch to compose",
+            "rewrite in compose",
+            "port to compose"
+        ).any(normalized::contains)
+    }
 
     private fun refreshChangeSets(projectId: String) {
         _uiState.update { it.copy(changeSets = changeSetManager.listChangeSets(projectId)) }

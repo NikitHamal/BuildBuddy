@@ -204,9 +204,9 @@ private fun TemplateStep(uiState: CreateProjectUiState, viewModel: CreateProject
         item {
             NvCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(NvSpacing.Sm), verticalArrangement = Arrangement.spacedBy(NvSpacing.Xxs)) {
-                    Text("On-device build compatibility", style = MaterialTheme.typography.labelLarge)
+                    Text("Build path selection", style = MaterialTheme.typography.labelLarge)
                     Text(
-                        "Legacy-verified Java/View starters compile through the bundled AAPT2 + ECJ + D8 lane. Kotlin and Compose starters use the new Gradle build lane when a Java 17 toolchain is available on-device.",
+                        "Java + Views starters use the bundled on-device build path. Kotlin + Compose starters use the Gradle build path. Blank starters are the default for both stacks.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -233,10 +233,9 @@ private fun TemplateStep(uiState: CreateProjectUiState, viewModel: CreateProject
                         Row(horizontalArrangement = Arrangement.spacedBy(NvSpacing.Xs), modifier = Modifier.padding(top = NvSpacing.Xxs)) {
                             NvStatusChip(label = template.language.displayName, containerColor = MaterialTheme.colorScheme.secondaryContainer)
                             NvStatusChip(label = template.uiFramework.displayName, containerColor = MaterialTheme.colorScheme.tertiaryContainer)
-                            NvStatusChip(label = template.validationLabel, containerColor = MaterialTheme.colorScheme.primaryContainer)
                         }
                         Text(
-                            text = template.preferredBuildEngine.displayName,
+                            text = "Build path: ${template.preferredBuildEngine.displayName}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = NvSpacing.Xxs)

@@ -6,6 +6,7 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,14 +15,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
@@ -31,7 +30,6 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.InstallMobile
-import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
@@ -100,8 +98,14 @@ fun BuildWorkspaceScreen(
                 uiState = uiState,
                 onStartBuild = viewModel::startBuild,
                 onCancelBuild = viewModel::cancelBuild,
-                onCleanBuild = viewModel::cleanBuild,
-                onAskAgent = onNavigateToAgent
+                onCleanBuild = viewModel::cleanBuild
+            )
+        }
+
+        item {
+            LogConsolePane(
+                entries = uiState.logEntries,
+                formatter = timeFormat
             )
         }
 
@@ -109,8 +113,7 @@ fun BuildWorkspaceScreen(
             item {
                 ProblemsPane(
                     problems = uiState.problems,
-                    errorSummary = uiState.errorSummary,
-                    onAskAgent = onNavigateToAgent
+                    errorSummary = uiState.errorSummary
                 )
             }
         }
@@ -129,27 +132,14 @@ fun BuildWorkspaceScreen(
             item {
                 BuildTimelinePane(
                     records = uiState.buildHistory.take(8),
-                    onCopyLogs = if (uiState.logEntries.isNotEmpty()) {
-                        {
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val payload = uiState.logEntries.joinToString("\n") { entry ->
-                                "[${timeFormat.format(Date(entry.timestamp))}] ${entry.level.name.first()} ${entry.message}"
-                            }
-                            clipboard.setPrimaryClip(ClipData.newPlainText("Build logs", payload))
-                            Toast.makeText(context, "Build logs copied", Toast.LENGTH_SHORT).show()
+                    onCopyLogs = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val payload = uiState.logEntries.joinToString("\n") { entry ->
+                            "[${timeFormat.format(Date(entry.timestamp))}] ${entry.level.name.first()} ${entry.message}"
                         }
-                    } else {
-                        null
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Build logs", payload))
+                        Toast.makeText(context, "Build logs copied", Toast.LENGTH_SHORT).show()
                     }
-                )
-            }
-        }
-
-        if (uiState.logEntries.isNotEmpty()) {
-            item {
-                LogConsolePane(
-                    entries = uiState.logEntries,
-                    formatter = timeFormat
                 )
             }
         }
@@ -166,12 +156,12 @@ fun BuildWorkspaceScreen(
             }
         }
 
-        if (!uiState.isBuilding && uiState.buildHistory.isEmpty() && uiState.latestArtifact == null && uiState.problems.isEmpty()) {
+        if (!uiState.isBuilding && uiState.buildHistory.isEmpty() && uiState.latestArtifact == null && uiState.problems.isEmpty() && uiState.logEntries.isEmpty()) {
             item {
                 NvEmptyState(
                     icon = Icons.Filled.Build,
                     title = "No builds yet",
-                    subtitle = "Run the production build pipeline to generate an artifact, inspect logs, and create restore points.",
+                    subtitle = "Run the build pipeline to generate an artifact, inspect logs, and create restore points.",
                     modifier = Modifier.padding(vertical = 48.dp)
                 )
             }
@@ -184,8 +174,7 @@ private fun BuildStatusCard(
     uiState: BuildUiState,
     onStartBuild: () -> Unit,
     onCancelBuild: () -> Unit,
-    onCleanBuild: () -> Unit,
-    onAskAgent: () -> Unit
+    onCleanBuild: () -> Unit
 ) {
     val (icon, tint) = when (uiState.buildStatus) {
         BuildStatus.SUCCESS -> Icons.Filled.CheckCircle to BuildBuddyThemeExtended.colors.success
@@ -214,10 +203,10 @@ private fun BuildStatusCard(
                     )
                     Text(
                         text = when {
-                            uiState.isBuilding -> "Build timeline, logs, and warnings update live here."
-                            uiState.buildStatus == BuildStatus.SUCCESS -> "Artifact metadata and install actions are available below."
-                            uiState.buildStatus == BuildStatus.FAILED -> "Problems and logs are ready for diagnosis or repair."
-                            else -> "Run a full validation build whenever you want a fresh artifact."
+                            uiState.isBuilding -> "Build logs stream below in real time."
+                            uiState.buildStatus == BuildStatus.SUCCESS -> "Artifact details, install, and share actions are ready below."
+                            uiState.buildStatus == BuildStatus.FAILED -> "Checks and logs are ready for diagnosis."
+                            else -> "Run a build whenever you want a fresh artifact."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -258,15 +247,6 @@ private fun BuildStatusCard(
                     )
                 }
             }
-
-            if (uiState.buildStatus == BuildStatus.FAILED) {
-                NvOutlinedButton(
-                    text = "Send failure to agent",
-                    onClick = onAskAgent,
-                    icon = Icons.Filled.Psychology,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
         }
     }
 }
@@ -274,41 +254,46 @@ private fun BuildStatusCard(
 @Composable
 private fun ProblemsPane(
     problems: List<String>,
-    errorSummary: String?,
-    onAskAgent: () -> Unit
+    errorSummary: String?
 ) {
+    val blocking = !errorSummary.isNullOrBlank()
+    val containerColor = if (blocking) MaterialTheme.colorScheme.errorContainer else BuildBuddyThemeExtended.colors.warningContainer
+    val contentColor = if (blocking) MaterialTheme.colorScheme.onErrorContainer else BuildBuddyThemeExtended.colors.onWarning
+    val accent = if (blocking) MaterialTheme.colorScheme.error else BuildBuddyThemeExtended.colors.warning
+    val subtitle = if (blocking) {
+        "Blocking checks and build failures appear here."
+    } else {
+        "Non-blocking compatibility notes and pre-build checks appear here."
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer,
-            contentColor = MaterialTheme.colorScheme.onErrorContainer
+            containerColor = containerColor,
+            contentColor = contentColor
         ),
-        border = BorderStroke(NvBorder.Thin, MaterialTheme.colorScheme.error.copy(alpha = 0.2f))
+        border = BorderStroke(NvBorder.Thin, accent.copy(alpha = 0.2f))
     ) {
         Column(
             modifier = Modifier.padding(NvSpacing.Md),
             verticalArrangement = Arrangement.spacedBy(NvSpacing.Sm)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = accent)
                 Spacer(Modifier.width(NvSpacing.Sm))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Problems", style = MaterialTheme.typography.titleSmall)
+                    Text(if (blocking) "Problems" else "Checks", style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "Integrity issues, compatibility blockers, and build failures surface here before or after compilation.",
+                        subtitle,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                        color = contentColor.copy(alpha = 0.8f)
                     )
                 }
-                NvTextButton(text = "Ask agent", onClick = onAskAgent, icon = Icons.Filled.Psychology)
             }
             SelectionContainer {
                 Column(verticalArrangement = Arrangement.spacedBy(NvSpacing.Xs)) {
                     problems.forEach { problem ->
                         Text("• $problem", style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
-                    }
-                    if (!errorSummary.isNullOrBlank() && problems.none { it == errorSummary }) {
-                        Text(errorSummary, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
                     }
                 }
             }
@@ -359,7 +344,7 @@ private fun ArtifactMetadataRow(label: String, value: String) {
 @Composable
 private fun BuildTimelinePane(
     records: List<BuildRecord>,
-    onCopyLogs: (() -> Unit)?
+    onCopyLogs: (() -> Unit)
 ) {
     NvCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -377,9 +362,7 @@ private fun BuildTimelinePane(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                if (onCopyLogs != null) {
-                    NvTextButton(text = "Copy logs", onClick = onCopyLogs, icon = Icons.Filled.ContentCopy)
-                }
+                NvTextButton(text = "Copy logs", onClick = onCopyLogs, icon = Icons.Filled.ContentCopy)
             }
             if (records.isEmpty()) {
                 Text("No build history yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -405,7 +388,9 @@ private fun TimelineRow(record: BuildRecord) {
         shape = NvShapes.medium
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(NvSpacing.Sm),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(NvSpacing.Sm),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -448,24 +433,32 @@ private fun LogConsolePane(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 420.dp)
+                            .heightIn(min = 180.dp, max = 420.dp)
                             .horizontalScroll(rememberScrollState())
                             .padding(NvSpacing.Sm),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        entries.takeLast(120).forEach { entry ->
+                        if (entries.isEmpty()) {
                             Text(
-                                text = "[${formatter.format(Date(entry.timestamp))}] ${entry.level.name.first()} ${entry.message}",
+                                text = "Build logs will stream here once a build starts.",
                                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                                color = when (entry.level) {
-                                    LogLevel.ERROR -> MaterialTheme.colorScheme.error
-                                    LogLevel.WARNING -> BuildBuddyThemeExtended.colors.warning
-                                    LogLevel.DEBUG -> MaterialTheme.colorScheme.onSurfaceVariant
-                                    LogLevel.VERBOSE -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                    LogLevel.INFO -> MaterialTheme.colorScheme.onSurface
-                                },
-                                softWrap = false
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        } else {
+                            entries.takeLast(160).forEach { entry ->
+                                Text(
+                                    text = "[${formatter.format(Date(entry.timestamp))}] ${entry.level.name.first()} ${entry.message}",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                    color = when (entry.level) {
+                                        LogLevel.ERROR -> MaterialTheme.colorScheme.error
+                                        LogLevel.WARNING -> BuildBuddyThemeExtended.colors.warning
+                                        LogLevel.DEBUG -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        LogLevel.VERBOSE -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                        LogLevel.INFO -> MaterialTheme.colorScheme.onSurface
+                                    },
+                                    softWrap = false
+                                )
+                            }
                         }
                     }
                 }
@@ -536,7 +529,9 @@ private fun RestorePointRow(
         shape = NvShapes.medium
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(NvSpacing.Sm),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(NvSpacing.Sm),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {

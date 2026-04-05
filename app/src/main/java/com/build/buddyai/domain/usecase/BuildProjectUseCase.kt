@@ -6,7 +6,6 @@ import com.build.buddyai.core.model.LogLevel
 import com.build.buddyai.core.model.PreferredBuildEngine
 import com.build.buddyai.core.model.Project
 import com.build.buddyai.domain.usecase.ondevice.GradleOnDeviceBuilder
-import com.build.buddyai.domain.usecase.ondevice.IntegrityLevel
 import com.build.buddyai.domain.usecase.ondevice.OnDeviceBuildPipeline
 import com.build.buddyai.domain.usecase.ondevice.ProjectIntegrityVerifier
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -61,16 +60,17 @@ class BuildProjectUseCase @Inject constructor(
                 return@withContext
             }
 
-            val engine = selectEngine(project, integrity)
+            val engineSelection = selectEngine(project, integrity)
+            engineSelection.warnings.forEach { onEvent(BuildEvent.Warning(it)) }
 
             onEvent(BuildEvent.Progress(0.02f, "Preparing build environment…"))
             onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Starting build for ${project.name}")))
             onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Project path: ${project.projectPath}")))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Selected build engine: ${engine.displayName}")))
+            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Selected build path: ${engineSelection.engine.displayName}")))
 
-            val result = when (engine) {
+            val result = when (engineSelection.engine) {
                 BuildEngine.LEGACY -> {
-                    onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Build engine: AAPT2 + ECJ + D8 (legacy on-device pipeline)")))
+                    onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Build engine: AAPT2 + ECJ + D8 (on-device Java pipeline)")))
                     val pipeline = OnDeviceBuildPipeline(context)
                     val buildResult = pipeline.build(
                         project = project,
@@ -92,8 +92,9 @@ class BuildProjectUseCase @Inject constructor(
                     )
                     BuildResult(buildResult.apkPath, buildResult.apkSize)
                 }
+
                 BuildEngine.GRADLE -> {
-                    onEvent(BuildEvent.Progress(0.08f, "Running Gradle validation build…"))
+                    onEvent(BuildEvent.Progress(0.08f, "Running Gradle build…"))
                     val builder = GradleOnDeviceBuilder(context = context, projectDir = projectDir) { message ->
                         kotlinx.coroutines.runBlocking {
                             if (coroutineContext.isActive && !buildCancellationRegistry.isCancelled(buildId)) {
@@ -131,26 +132,32 @@ class BuildProjectUseCase @Inject constructor(
     private fun selectEngine(
         project: Project,
         integrity: com.build.buddyai.domain.usecase.ondevice.IntegrityReport
-    ): BuildEngine {
+    ): EngineSelection {
         val preferred = integrity.preferredBuildEngine
             ?.let { raw -> PreferredBuildEngine.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } }
             ?: project.template.preferredBuildEngine
         val index = integrity.symbolIndex
-        val legacyBlocked = integrity.warnings.any { warning ->
+        val requiresGradle = index.hasKotlin || index.hasCompose || integrity.warnings.any { warning ->
             warning.message.contains("ConstraintLayout", ignoreCase = true) ||
-                warning.message.contains("AndroidX/Material XML widgets", ignoreCase = true)
+                warning.message.contains("AndroidX or Material XML widgets", ignoreCase = true)
         }
-        return when (preferred) {
-            PreferredBuildEngine.LEGACY -> {
-                if (index.hasKotlin) throw RuntimeException("Legacy validation was requested but Kotlin sources are present. Switch this project to the Gradle build path.")
-                if (legacyBlocked) throw RuntimeException("Legacy validation is blocked by dependency-backed XML resources. Use the Gradle build path for this project.")
-                BuildEngine.LEGACY
+
+        if (requiresGradle && !index.hasGradleWrapper) {
+            throw RuntimeException("This project now requires the Gradle build path, but the Gradle wrapper is missing.")
+        }
+
+        return when {
+            requiresGradle -> {
+                val warnings = buildList {
+                    if (preferred == PreferredBuildEngine.LEGACY) {
+                        add("Project metadata still targets the Java on-device build path, so BuildBuddy switched this run to Gradle because the source tree contains Kotlin, Compose, or dependency-backed resources.")
+                    }
+                }
+                EngineSelection(BuildEngine.GRADLE, warnings)
             }
-            PreferredBuildEngine.GRADLE -> BuildEngine.GRADLE
-            PreferredBuildEngine.AUTO -> when {
-                index.hasKotlin || index.hasCompose || legacyBlocked -> BuildEngine.GRADLE
-                else -> BuildEngine.LEGACY
-            }
+            preferred == PreferredBuildEngine.GRADLE -> EngineSelection(BuildEngine.GRADLE)
+            preferred == PreferredBuildEngine.AUTO -> EngineSelection(BuildEngine.LEGACY)
+            else -> EngineSelection(BuildEngine.LEGACY)
         }
     }
 
@@ -168,12 +175,17 @@ class BuildProjectUseCase @Inject constructor(
         BuildLogEntry(timestamp = System.currentTimeMillis(), level = level, message = message, source = "build")
 
     private enum class BuildEngine(val displayName: String) {
-        LEGACY("AAPT2 + ECJ + D8"),
-        GRADLE("Gradle wrapper + AGP")
+        LEGACY("On-device"),
+        GRADLE("Gradle")
     }
 
     private data class BuildResult(
         val artifactPath: String,
         val artifactSize: Long
+    )
+
+    private data class EngineSelection(
+        val engine: BuildEngine,
+        val warnings: List<String> = emptyList()
     )
 }

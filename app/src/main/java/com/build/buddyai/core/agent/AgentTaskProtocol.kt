@@ -24,11 +24,12 @@ data class AgentFileWrite(
 data class ParsedAgentResponse(
     val envelope: AgentTaskEnvelope?,
     val writes: List<AgentFileWrite>,
+    val edits: List<AgentStructuredEdit>,
     val deletes: List<String>,
     val displayMessage: String,
     val rawContent: String
 ) {
-    val isTask: Boolean get() = envelope?.mode == AgentTaskEnvelope.MODE_TASK || writes.isNotEmpty() || deletes.isNotEmpty()
+    val isTask: Boolean get() = envelope?.mode == AgentTaskEnvelope.MODE_TASK || writes.isNotEmpty() || edits.isNotEmpty() || deletes.isNotEmpty()
     val shouldBuild: Boolean get() = envelope?.shouldBuild == true
 }
 
@@ -50,23 +51,22 @@ object AgentTaskProtocol {
         val writes = filepathRegex.findAll(rawContent).mapNotNull { match ->
             val path = match.groupValues.getOrNull(1)?.trim().orEmpty()
             val content = match.groupValues.getOrNull(2)?.trimEnd().orEmpty()
-            if (path.isBlank()) {
-                null
-            } else {
-                AgentFileWrite(path = path, content = content)
-            }
+            if (path.isBlank()) null else AgentFileWrite(path = path, content = content)
         }.toList()
 
+        val edits = StructuredEditEngine.parse(rawContent)
         val deletes = envelope?.deleteFiles.orEmpty().distinct()
         val stripped = rawContent
             .replace(envelopeRegex, "")
             .replace(filepathRegex, "")
+            .replace(Regex("""```buildbuddy-edit[\s\S]*?```"""), "")
+            .replace(Regex("""```buildbuddy-edits[\s\S]*?```"""), "")
             .trim()
 
         val displayMessage = envelope?.summary?.takeIf { it.isNotBlank() }
             ?: stripped.ifBlank {
                 when {
-                    writes.isNotEmpty() || deletes.isNotEmpty() -> "Task completed."
+                    writes.isNotEmpty() || edits.isNotEmpty() || deletes.isNotEmpty() -> "Task completed."
                     else -> rawContent.trim()
                 }
             }
@@ -74,6 +74,7 @@ object AgentTaskProtocol {
         return ParsedAgentResponse(
             envelope = envelope,
             writes = writes,
+            edits = edits,
             deletes = deletes,
             displayMessage = displayMessage,
             rawContent = rawContent.trim()
@@ -86,7 +87,9 @@ Always begin your response with a buildbuddy JSON block:
 {"mode":"reply|task","summary":"what you did or what the answer is","shouldBuild":false,"deleteFiles":[]}
 ```
 
-If files must be created or updated, emit one full-file block per file:
+${StructuredEditEngine.protocolInstructions()}
+
+If files must be created or fully replaced, emit one full-file block per file:
 ```filepath:relative/path/from/project/root
 <complete file content>
 ```
@@ -94,9 +97,11 @@ If files must be created or updated, emit one full-file block per file:
 Rules:
 - Use mode="reply" for pure questions or advice with no project edits.
 - Use mode="task" for implementation, fixes, refactors, audits that change files, or validation work.
+- Prefer surgical edit blocks for existing Kotlin, Java, and XML files.
+- Preserve the existing language and UI stack unless the user explicitly asks for a migration.
 - Never output partial patches, ellipses, or placeholders.
 - Never write outside the project root.
-- Put every file change in filepath blocks and every deletion in deleteFiles.
+- Put every file deletion in deleteFiles.
 - Set shouldBuild=true when the changed project should be validated immediately.
 """.trimIndent()
 }

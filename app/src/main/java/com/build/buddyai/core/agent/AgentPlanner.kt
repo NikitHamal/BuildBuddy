@@ -27,8 +27,9 @@ Return only one JSON block using this exact fence:
 ```
 
 Rules:
-- focusFiles must be project-relative paths from the provided index when possible.
+- focusFiles must be project-relative paths from the provided index or graph when possible.
 - Keep goals and riskChecks concise and concrete.
+- Preserve the current language/UI stack unless the user explicitly asks to migrate it.
 - Set shouldBuild=true when the task changes code that should be validated now.
 - Do not include prose outside the JSON fence.
 """.trimIndent()
