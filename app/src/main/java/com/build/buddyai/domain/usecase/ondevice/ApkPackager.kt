@@ -53,20 +53,41 @@ class ApkPackager(
         ZipOutputStream(output.outputStream().buffered()).use { zos ->
             val resourcesApk = File(resourcesApkPath)
             if (resourcesApk.exists()) {
+                log("[APK] Copying resources from: ${resourcesApk.name} (${resourcesApk.length()} bytes)")
                 ZipInputStream(resourcesApk.inputStream().buffered()).use { zis ->
                     copyZipEntries(zis, zos, excludeSignatureFiles = true)
                 }
+            } else {
+                log("[APK] ERROR: resources.ap_ not found at: $resourcesApkPath")
             }
 
             dexOutputDir.listFiles()
                 ?.filter { it.isFile && it.extension == "dex" }
                 ?.sortedBy { it.name }
                 ?.forEach { dexFile ->
-                    log("[APK] Adding ${dexFile.name}")
+                    log("[APK] Adding ${dexFile.name} (${dexFile.length()} bytes)")
                     zos.putNextEntry(ZipEntry(dexFile.name))
                     dexFile.inputStream().use { it.copyTo(zos) }
                     zos.closeEntry()
                 }
+        }
+        
+        // Verify the APK was created properly
+        if (output.exists()) {
+            val zipEntries = mutableListOf<String>()
+            java.util.zip.ZipFile(output).use { zip ->
+                zip.entries().asSequence().forEach { entry -> zipEntries.add(entry.name) }
+            }
+            log("[APK] APK contains ${zipEntries.size} entries: ${zipEntries.joinToString(", ")}")
+            
+            // Verify critical entries
+            val hasManifest = zipEntries.contains("AndroidManifest.xml")
+            val hasDex = zipEntries.any { it.endsWith(".dex") }
+            val hasResources = zipEntries.contains("resources.arsc")
+            
+            if (!hasManifest) log("[APK] WARNING: Missing AndroidManifest.xml!")
+            if (!hasDex) log("[APK] WARNING: No classes.dex found!")
+            if (!hasResources) log("[APK] WARNING: Missing resources.arsc!")
         }
     }
 
@@ -114,8 +135,12 @@ class ApkPackager(
         val pk8 = File(testkeyDir, "testkey.pk8")
         val x509 = File(testkeyDir, "testkey.x509.pem")
 
+        log("[APK] Looking for signing keys in: ${testkeyDir.absolutePath}")
+        log("[APK] testkey.pk8 exists: ${pk8.exists()}, size: ${if (pk8.exists()) pk8.length() else 0}")
+        log("[APK] testkey.x509.pem exists: ${x509.exists()}, size: ${if (x509.exists()) x509.length() else 0}")
+
         if (!pk8.exists() || !x509.exists()) {
-            log("[APK] WARNING: No signing key found - APK will be unsigned")
+            log("[APK] WARNING: No signing key found - APK will be unsigned (will fail to install)")
             unsignedApk.copyTo(signedApk, overwrite = true)
             return
         }
@@ -123,19 +148,27 @@ class ApkPackager(
         try {
             // Load private key
             val pkBytes = pk8.readBytes()
+            log("[APK] Key file size: ${pkBytes.size} bytes")
             val pkcs8Key = stripPkcs8Headers(pkBytes)
+            log("[APK] Decoded key size: ${pkcs8Key.size} bytes")
+            
             val keySpec = PKCS8EncodedKeySpec(pkcs8Key)
             val privateKey = KeyFactory.getInstance("RSA").generatePrivate(keySpec)
+            log("[APK] Private key loaded: ${privateKey.algorithm}, format: ${privateKey.format}")
 
             // Load certificate
-            val cert = x509.inputStream().use { 
+            val cert = x509.inputStream().use {
                 CertificateFactory.getInstance("X.509").generateCertificate(it) as X509Certificate
             }
+            log("[APK] Certificate loaded: ${cert.subjectDN}, valid until: ${cert.notAfter}")
 
             // Use apksig library to sign the APK
             val signerConfig = ApkSigner.SignerConfig.Builder("testkey", privateKey, listOf(cert))
+                .setV1SigningEnabled(true)
+                .setV2SigningEnabled(true)
                 .build()
-            
+
+            log("[APK] Starting APK signing with apksig library...")
             ApkSigner.Builder(listOf(signerConfig))
                 .setInputApk(unsignedApk)
                 .setOutputApk(signedApk)
@@ -143,9 +176,12 @@ class ApkPackager(
                 .sign()
 
             log("[APK] APK signed with apksig library (v2/v3 signature)")
+            log("[APK] Signed APK size: ${signedApk.length()} bytes")
         } catch (e: Exception) {
-            log("[APK] WARNING: Signing failed: ${e.message}. Copying unsigned.")
+            log("[APK] ERROR: Signing failed: ${e.message}")
+            log("[APK] Exception type: ${e.javaClass.simpleName}")
             e.printStackTrace()
+            log("[APK] WARNING: Copying unsigned APK (will likely fail to install)")
             unsignedApk.copyTo(signedApk, overwrite = true)
         }
     }
