@@ -81,7 +81,8 @@ data class AgentUiState(
     val latestArtifact: BuildArtifact? = null,
     val integrityWarnings: List<String> = emptyList(),
     val problems: List<BuildProblem> = emptyList(),
-    val pendingReview: PendingAgentReview? = null
+    val pendingReview: PendingAgentReview? = null,
+    val allProviders: List<com.build.buddyai.core.model.AiProvider> = emptyList()
 )
 
 data class ReviewHunkPreview(
@@ -139,10 +140,12 @@ class AgentViewModel @Inject constructor(
     private var artifactsJob: Job? = null
     private var problemsJob: Job? = null
     private var settingsJob: Job? = null
+    private var providersJob: Job? = null
 
     fun initialize(projectId: String) {
         currentProjectId = projectId
         observeSettings()
+        observeProviders()
         loadProviderState()
         observeSessions(projectId)
         observeArtifacts(projectId)
@@ -150,12 +153,11 @@ class AgentViewModel @Inject constructor(
         refreshChangeSets()
     }
 
-    private fun observeSettings() {
-        settingsJob?.cancel()
-        settingsJob = viewModelScope.launch {
-            settingsDataStore.settings.collectLatest { settings ->
-                _uiState.update { it.copy(autonomyMode = settings.autonomyMode) }
-                loadProviderState()
+    private fun observeProviders() {
+        providersJob?.cancel()
+        providersJob = viewModelScope.launch {
+            providerRepository.getAllProviders().collectLatest { providers ->
+                _uiState.update { it.copy(allProviders = providers) }
             }
         }
     }
@@ -218,6 +220,20 @@ class AgentViewModel @Inject constructor(
     }
 
     fun updateInput(input: String) = _uiState.update { it.copy(currentInput = input) }
+
+    fun updateAutonomyMode(mode: AgentAutonomyMode) {
+        viewModelScope.launch {
+            settingsDataStore.updateAutonomyMode(mode)
+        }
+    }
+
+    fun selectModel(providerId: String, modelId: String) {
+        viewModelScope.launch {
+            providerRepository.setDefaultProvider(providerId)
+            providerRepository.updateProviderModel(providerId, modelId)
+            loadProviderState()
+        }
+    }
 
     fun toggleFileAttachment(path: String) {
         val normalized = normalizePathOrNull(path) ?: return

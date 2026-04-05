@@ -18,22 +18,21 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.InstallMobile
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,6 +41,7 @@ import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -49,12 +49,19 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.build.buddyai.R
@@ -65,7 +72,10 @@ import com.build.buddyai.core.designsystem.component.NvTopBar
 import com.build.buddyai.core.designsystem.theme.NvElevation
 import com.build.buddyai.core.designsystem.theme.NvShapes
 import com.build.buddyai.core.designsystem.theme.NvSpacing
-import com.build.buddyai.core.model.ProblemSeverity
+import com.build.buddyai.core.model.AgentAutonomyMode
+import com.build.buddyai.core.model.AiModel
+import com.build.buddyai.core.model.AiProvider
+import com.build.buddyai.feature.agent.components.AgentPromptBar
 
 @Composable
 fun AgentScreen(
@@ -104,10 +114,6 @@ fun AgentScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            AgentStatusHeader(
-                modelName = uiState.modelName,
-                providerName = uiState.providerName
-            )
 
             if (!uiState.hasProvider) {
                 NvEmptyState(
@@ -317,55 +323,24 @@ fun AgentScreen(
                     }
                 }
 
-                Surface(
-                    tonalElevation = NvElevation.Sm,
-                    modifier = Modifier.fillMaxWidth().imePadding()
-                ) {
-                    Column(modifier = Modifier.padding(NvSpacing.Sm), verticalArrangement = Arrangement.spacedBy(NvSpacing.Xxs)) {
-                        if (uiState.attachedFiles.isNotEmpty()) {
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(NvSpacing.Xxs)) {
-                                items(uiState.attachedFiles) { file ->
-                                    InputChip(
-                                        selected = true,
-                                        onClick = { viewModel.removeAttachment(file) },
-                                        label = { Text(file.substringAfterLast('/'), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                        trailingIcon = { Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                                    )
-                                }
-                            }
-                        }
-                        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (uiState.supportsImageAttachments) {
-                                FilledIconButton(
-                                    onClick = { imagePicker.launch("image/*") },
-                                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)
-                                ) {
-                                    Icon(Icons.Filled.AddPhotoAlternate, contentDescription = "Attach image")
-                                }
-                            }
-                            OutlinedTextField(
-                                value = uiState.currentInput,
-                                onValueChange = viewModel::updateInput,
-                                modifier = Modifier.weight(1f).heightIn(min = 56.dp),
-                                placeholder = { Text(stringResource(R.string.agent_input_hint), style = MaterialTheme.typography.bodySmall) },
-                                maxLines = 5,
-                                shape = NvShapes.small,
-                                textStyle = MaterialTheme.typography.bodyMedium
-                            )
-                            if (uiState.isStreaming) {
-                                FilledIconButton(
-                                    onClick = viewModel::cancelStream,
-                                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)
-                                ) { Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.agent_stop)) }
-                            } else {
-                                FilledIconButton(
-                                    onClick = viewModel::sendMessage,
-                                    enabled = uiState.currentInput.isNotBlank() || uiState.attachedFiles.isNotEmpty()
-                                ) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.agent_send)) }
-                            }
-                        }
-                    }
-                }
+                AgentPromptBar(
+                    currentInput = uiState.currentInput,
+                    attachedFiles = uiState.attachedFiles,
+                    autonomyMode = uiState.autonomyMode,
+                    modelName = uiState.modelName,
+                    providerName = uiState.providerName,
+                    allProviders = uiState.allProviders,
+                    supportsImageAttachments = uiState.supportsImageAttachments,
+                    isStreaming = uiState.isStreaming,
+                    onUpdateInput = viewModel::updateInput,
+                    onSendMessage = viewModel::sendMessage,
+                    onCancelStream = viewModel::cancelStream,
+                    onAttachImage = { imagePicker.launch("image/*") },
+                    onRemoveAttachment = viewModel::removeAttachment,
+                    onUpdateMode = viewModel::updateAutonomyMode,
+                    onSelectModel = viewModel::selectModel,
+                    placeholder = stringResource(R.string.agent_input_hint)
+                )
             }
         }
     }

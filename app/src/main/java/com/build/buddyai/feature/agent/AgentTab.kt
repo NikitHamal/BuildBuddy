@@ -18,14 +18,14 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Stop
@@ -61,11 +61,13 @@ import com.build.buddyai.core.designsystem.theme.NvShapes
 import com.build.buddyai.core.designsystem.theme.NvSpacing
 import com.build.buddyai.core.model.ActionStatus
 import com.build.buddyai.core.model.AgentAction
+import com.build.buddyai.core.model.AgentAutonomyMode
 import com.build.buddyai.core.model.BuildStatus
 import com.build.buddyai.core.model.FileDiff
 import com.build.buddyai.core.model.MessageRole
 import com.build.buddyai.core.model.MessageStatus
 import com.build.buddyai.core.model.ChatMessage
+import com.build.buddyai.feature.agent.components.AgentPromptBar
 
 @Composable
 fun AgentTab(
@@ -84,10 +86,6 @@ fun AgentTab(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        AgentStatusHeader(
-            modelName = uiState.modelName,
-            providerName = uiState.providerName
-        )
 
         if (!uiState.hasProvider) {
             NvEmptyState(
@@ -141,98 +139,30 @@ fun AgentTab(
             }
         }
 
-        if (uiState.hasProvider) {
-            Surface(
-                tonalElevation = NvElevation.Sm,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .imePadding()
-            ) {
-                Column(modifier = Modifier.padding(NvSpacing.Sm)) {
-                    if (uiState.attachedFiles.isNotEmpty()) {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(NvSpacing.Xxs),
-                            modifier = Modifier.padding(bottom = NvSpacing.Xxs)
-                        ) {
-                            items(uiState.attachedFiles) { file ->
-                                InputChip(
-                                    selected = true,
-                                    onClick = { viewModel.toggleFileAttachment(file) },
-                                    label = { Text(file.substringAfterLast("/"), style = MaterialTheme.typography.labelSmall) },
-                                    trailingIcon = { Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                                )
-                            }
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.Bottom) {
-                        OutlinedTextField(
-                            value = uiState.currentInput,
-                            onValueChange = viewModel::updateInput,
-                            modifier = Modifier.weight(1f),
-                            placeholder = { Text(stringResource(R.string.agent_input_hint), style = MaterialTheme.typography.bodySmall) },
-                            maxLines = 5,
-                            shape = NvShapes.small,
-                            textStyle = MaterialTheme.typography.bodyMedium
-                        )
-                        Spacer(Modifier.width(NvSpacing.Xs))
-                        if (uiState.isStreaming) {
-                            FilledIconButton(
-                                onClick = viewModel::cancelStream,
-                                colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)
-                            ) { Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.agent_stop)) }
-                        } else {
-                            FilledIconButton(
-                                onClick = viewModel::sendMessage,
-                                enabled = uiState.currentInput.isNotBlank()
-                            ) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.agent_send)) }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
-@Composable
-internal fun AgentStatusHeader(
-    modelName: String?,
-    providerName: String?
-) {
-    Surface(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = NvSpacing.Sm, vertical = NvSpacing.Xs),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            StatusPill(icon = Icons.Filled.AutoAwesome, label = "Safe apply")
-            Text(
-                text = listOfNotNull(providerName, modelName).joinToString(" · ").ifBlank { "No model selected" },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+        if (uiState.hasProvider) {
+            AgentPromptBar(
+                currentInput = uiState.currentInput,
+                attachedFiles = uiState.attachedFiles,
+                autonomyMode = uiState.autonomyMode,
+                modelName = uiState.modelName,
+                providerName = uiState.providerName,
+                allProviders = uiState.allProviders,
+                supportsImageAttachments = uiState.supportsImageAttachments,
+                isStreaming = uiState.isStreaming,
+                onUpdateInput = viewModel::updateInput,
+                onSendMessage = viewModel::sendMessage,
+                onCancelStream = viewModel::cancelStream,
+                onAttachImage = { /* No-op in Tab */ },
+                onRemoveAttachment = viewModel::toggleFileAttachment,
+                onUpdateMode = viewModel::updateAutonomyMode,
+                onSelectModel = viewModel::selectModel,
+                placeholder = stringResource(R.string.agent_input_hint)
             )
         }
     }
 }
 
-@Composable
-private fun StatusPill(icon: ImageVector, label: String) {
-    Surface(
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = NvSpacing.Sm, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
-            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
-        }
-    }
-}
 
 @Composable
 internal fun ChatMessageItem(message: ChatMessage) {
