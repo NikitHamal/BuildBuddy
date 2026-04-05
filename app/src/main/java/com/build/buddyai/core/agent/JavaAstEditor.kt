@@ -38,7 +38,7 @@ class JavaAstEditor @Inject constructor() {
     }
 
     private fun replaceOrUpsertMethod(cu: CompilationUnit, op: AgentEditOperation) {
-        val parseResult = parser.parseBodyDeclaration(op.payload)
+        val parseResult = parser.parseBodyDeclaration<BodyDeclaration<*>>(op.payload)
         val methodDecl = parseResult.result.orElseThrow {
             IllegalArgumentException("Invalid Java method payload: ${parseResult.problems}")
         } as? MethodDeclaration ?: throw IllegalArgumentException("Payload must be a Java method declaration")
