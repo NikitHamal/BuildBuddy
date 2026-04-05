@@ -52,13 +52,17 @@ class ApkPackager(
 
         ZipOutputStream(output.outputStream().buffered()).use { zos ->
             val resourcesApk = File(resourcesApkPath)
+            log("[APK] Looking for resources.ap_ at: $resourcesApkPath")
+            log("[APK] resources.ap_ exists: ${resourcesApk.exists()}, size: ${if (resourcesApk.exists()) resourcesApk.length() else 0}")
+            
             if (resourcesApk.exists()) {
                 log("[APK] Copying resources from: ${resourcesApk.name} (${resourcesApk.length()} bytes)")
                 ZipInputStream(resourcesApk.inputStream().buffered()).use { zis ->
                     copyZipEntries(zis, zos, excludeSignatureFiles = true)
                 }
             } else {
-                log("[APK] ERROR: resources.ap_ not found at: $resourcesApkPath")
+                log("[APK] ERROR: resources.ap_ NOT FOUND at: $resourcesApkPath")
+                log("[APK] WARNING: APK will be missing resources and manifest!")
             }
 
             dexOutputDir.listFiles()
@@ -85,9 +89,9 @@ class ApkPackager(
             val hasDex = zipEntries.any { it.endsWith(".dex") }
             val hasResources = zipEntries.contains("resources.arsc")
             
-            if (!hasManifest) log("[APK] WARNING: Missing AndroidManifest.xml!")
+            if (!hasManifest) log("[APK] ERROR: Missing AndroidManifest.xml - APK WILL NOT INSTALL!")
             if (!hasDex) log("[APK] WARNING: No classes.dex found!")
-            if (!hasResources) log("[APK] WARNING: Missing resources.arsc!")
+            if (!hasResources) log("[APK] ERROR: Missing resources.arsc - APK WILL NOT INSTALL!")
         }
     }
 

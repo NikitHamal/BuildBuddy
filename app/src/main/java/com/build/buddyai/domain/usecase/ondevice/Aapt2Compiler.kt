@@ -93,6 +93,23 @@ class Aapt2Compiler(
         }
 
         execute(args, "AAPT2 link")
+        
+        // Verify output was created
+        val outputApk = File(resourcesApkPath)
+        if (outputApk.exists()) {
+            log("[AAPT2] resources.ap_ created successfully (${outputApk.length()} bytes)")
+            // List contents
+            try {
+                java.util.zip.ZipFile(outputApk).use { zip ->
+                    val entries = zip.entries().asSequence().toList()
+                    log("[AAPT2] resources.ap_ contains ${entries.size} entries: ${entries.map { it.name }.joinToString(", ")}")
+                }
+            } catch (e: Exception) {
+                log("[AAPT2] WARNING: Could not read resources.ap_ contents: ${e.message}")
+            }
+        } else {
+            log("[AAPT2] ERROR: resources.ap_ was NOT CREATED by AAPT2 link!")
+        }
     }
 
     private fun execute(args: List<String>, tag: String) {
