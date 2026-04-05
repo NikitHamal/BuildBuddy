@@ -54,7 +54,6 @@
 # ECJ references JDK and JDT Core APIs that don't exist on Android.
 # We only use ECJ's batch compiler at runtime, so all missing references are safe to suppress.
 -dontwarn javax.tools.**
--dontwarn javax.lang.model.**
 -dontwarn javax.annotation.processing.**
 -dontwarn com.sun.source.**
 -dontwarn org.eclipse.jdt.core.**
@@ -64,6 +63,9 @@
 -dontwarn org.eclipse.jdt.internal.compiler.ISourceElementRequestor$*
 -dontwarn org.eclipse.jdt.internal.compiler.SourceElementNotifier
 -dontwarn org.eclipse.jdt.internal.compiler.ExtraFlags
+
+# Keep javax.lang.model stubs for ECJ runtime
+-keep class javax.lang.model.** { *; }
 
 # Keep only the ECJ batch compiler entry point used at runtime
 -keep class org.eclipse.jdt.internal.compiler.batch.Main { *; }

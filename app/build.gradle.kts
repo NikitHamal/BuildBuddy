@@ -31,6 +31,12 @@ android {
         }
     }
 
+    sourceSets {
+        getByName("main") {
+            java.srcDir("${rootProject.projectDir}/build_tools_stubs")
+        }
+    }
+
     signingConfigs {
         create("release") {
             storeFile = file("${rootProject.projectDir}/keystore/buildbuddy-release.jks")

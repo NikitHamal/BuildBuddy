@@ -43,18 +43,27 @@ class EcjCompiler(
         // Build classpath: android.jar + lambda stubs + javax.lang.model stubs + any extra jars
         val classpathParts = mutableListOf(androidJar.absolutePath)
         if (coreLambdaStubsJar.exists()) classpathParts += coreLambdaStubsJar.absolutePath
+
+        // Add javax.lang.model stubs - try compiled classes first, then jar
+        val rootProjectDir = findRootProjectDir(projectDir)
+        if (rootProjectDir != null) {
+            val compiledStubsDir = File(rootProjectDir, "build_tools_stubs/compiled")
+            if (compiledStubsDir.exists()) {
+                classpathParts += compiledStubsDir.absolutePath
+                log("[ECJ] Using compiled javax stubs from: ${compiledStubsDir.absolutePath}")
+            }
+        }
         
-        // Add javax.lang.model stubs for ECJ runtime compatibility
         val javaxStubsJar = File(projectDir, ".build/tools/javax-lang-model-stubs.jar")
         javaxStubsJar.parentFile?.mkdirs()
         val projectStubsJar = File(projectDir, "build_tools/javax-lang-model-stubs.jar")
-        if (projectStubsJar.exists()) {
+        if (projectStubsJar.exists() && !classpathParts.any { it.contains("javax") }) {
             projectStubsJar.copyTo(javaxStubsJar, overwrite = true)
             classpathParts += javaxStubsJar.absolutePath
         }
-        
+
         extraClasspathJars.filter { it.exists() }.forEach { classpathParts += it.absolutePath }
-        val classpath = classpathParts.joinToString(":")
+        val classpath = classpathParts.joinToString(File.pathSeparator)
 
         val args = mutableListOf(
             "-$javaVersion",   // -8 for Java 8 compatibility
@@ -97,5 +106,16 @@ class EcjCompiler(
         }
 
         log("[ECJ] Compilation succeeded (${compiler.exportedClassFilesCounter} class files)")
+    }
+
+    private fun findRootProjectDir(startDir: File): File? {
+        var current: File? = startDir
+        while (current != null) {
+            if (File(current, "settings.gradle.kts").exists() || File(current, "settings.gradle").exists()) {
+                return current
+            }
+            current = current.parentFile
+        }
+        return null
     }
 }
