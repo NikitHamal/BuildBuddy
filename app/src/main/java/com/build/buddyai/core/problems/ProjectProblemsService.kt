@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -51,7 +53,7 @@ class ProjectProblemsService @Inject constructor(
     private fun save(projectId: String, problems: List<BuildProblem>) {
         val file = file(projectId)
         file.parentFile?.mkdirs()
-        file.writeText(json.encodeToString(StoredProblems(problems)))
+        file.writeText(json.encodeToString<StoredProblems>(StoredProblems(problems)))
     }
 
     private fun file(projectId: String) = File(context.filesDir, "project_problems/$projectId.json")

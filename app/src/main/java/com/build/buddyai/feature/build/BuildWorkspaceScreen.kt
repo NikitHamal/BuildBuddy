@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -216,9 +215,10 @@ fun BuildWorkspaceScreen(
                     )
                     HorizontalDivider()
                     Text("Release signing", style = MaterialTheme.typography.titleSmall)
-                    if (uiState.buildProfile.signing != null) {
+                    val signing = uiState.buildProfile.signing
+                    if (signing != null) {
                         Text(
-                            "Keystore: ${uiState.buildProfile.signing.keystoreFileName}",
+                            "Keystore: ${signing.keystoreFileName}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

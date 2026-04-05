@@ -7,6 +7,8 @@ import com.build.buddyai.core.model.BuildRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,7 +21,7 @@ class ArtifactProvenanceStore @Inject constructor(
     fun save(record: ArtifactProvenance) {
         file(record.artifactId).apply {
             parentFile?.mkdirs()
-            writeText(json.encodeToString(record))
+            writeText(json.encodeToString<ArtifactProvenance>(record))
         }
     }
 

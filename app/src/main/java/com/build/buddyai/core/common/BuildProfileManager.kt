@@ -8,6 +8,8 @@ import com.build.buddyai.core.model.SigningConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
@@ -31,7 +33,7 @@ class BuildProfileManager @Inject constructor(
     fun saveProfile(projectId: String, profile: BuildProfile, storePassword: String? = null, keyPassword: String? = null) {
         profileFile(projectId).apply {
             parentFile?.mkdirs()
-            writeText(json.encodeToString(StoredProfile.fromModel(profile)))
+            writeText(json.encodeToString<StoredProfile>(StoredProfile.fromModel(profile)))
         }
         storePassword?.takeIf { it.isNotBlank() }?.let { secureKeyStore.storeApiKey("sign_store_$projectId", it) }
         keyPassword?.takeIf { it.isNotBlank() }?.let { secureKeyStore.storeApiKey("sign_key_$projectId", it) }
