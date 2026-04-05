@@ -32,6 +32,7 @@ ecj = "3.26.0"
 r8 = "8.11.18"
 sdklib = "31.8.0"
 zipalignJava = "1.2.2"
+apksig = "8.7.3"
 scpkixJdk15on = "1.47.0.2"
 staxApi = "1.0-2"
 junit = "4.13.2"
@@ -116,6 +117,7 @@ ecj = { group = "org.eclipse.jdt", name = "ecj", version.ref = "ecj" }
 r8 = { group = "com.android.tools", name = "r8", version.ref = "r8" }
 sdklib = { group = "com.android.tools", name = "sdklib", version.ref = "sdklib" }
 zipalign-java = { group = "com.github.Iyxan23", name = "zipalign-java", version.ref = "zipalignJava" }
+apksig = { group = "com.android.tools.build", name = "apksig", version.ref = "apksig" }
 scpkix-jdk15on = { group = "com.madgag", name = "scpkix-jdk15on", version.ref = "scpkixJdk15on" }
 stax-api = { group = "javax.xml.stream", name = "stax-api", version.ref = "staxApi" }
 

@@ -1,12 +1,22 @@
 package com.build.buddyai.domain.usecase.ondevice
 
+import com.android.apksig.ApkSigner
+import com.iyxan23.zipalignjava.ZipAlign
 import java.io.File
+import java.io.FileOutputStream
+import java.io.RandomAccessFile
+import java.security.KeyFactory
+import java.security.PrivateKey
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
+import java.security.spec.PKCS8EncodedKeySpec
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 /**
  * Stage 4 + 5: Package DEX + resources into an APK, then sign it using the test key.
+ * Includes zipalign optimization before signing.
  */
 class ApkPackager(
     private val resourcesApkPath: String,
@@ -17,13 +27,25 @@ class ApkPackager(
 ) {
     fun packageAndSign() {
         val unsignedApk = File("${outputApkPath}.unsigned.apk")
+        val alignedApk = File("${outputApkPath}.aligned.apk")
+        
+        // Step 1: Package resources + DEX into unsigned APK
         packageApk(unsignedApk)
-        signApk(unsignedApk, File(outputApkPath))
+        
+        // Step 2: Zipalign the APK (optimizes memory usage at runtime)
+        zipalignApk(unsignedApk, alignedApk)
+        
+        // Step 3: Sign the aligned APK
+        signApk(alignedApk, File(outputApkPath))
+        
+        // Clean up intermediate files
         unsignedApk.delete()
+        alignedApk.delete()
+        
         log("[APK] Final signed APK: ${outputApkPath} (${File(outputApkPath).length()} bytes)")
     }
 
-    // Step 4: Merge resources.ap_ + classes.dex -> unsigned APK
+    // Step 1: Merge resources.ap_ + classes.dex -> unsigned APK
     private fun packageApk(output: File) {
         output.parentFile?.mkdirs()
         log("[APK] Packaging resources + DEX -> ${output.name}")
@@ -48,9 +70,27 @@ class ApkPackager(
         }
     }
 
-    // Step 5: Sign the APK
+    // Step 2: Zipalign the APK using zipalign-java library
+    private fun zipalignApk(input: File, output: File) {
+        log("[APK] Aligning APK with zipalign...")
+        try {
+            RandomAccessFile(input, "r").use { inputFile ->
+                FileOutputStream(output).use { outputFile ->
+                    ZipAlign.alignZip(inputFile, outputFile)
+                }
+            }
+            log("[APK] APK aligned successfully (${input.length()} -> ${output.length()} bytes)")
+        } catch (e: Exception) {
+            log("[APK] WARNING: Zipalign failed: ${e.message}. Using unaligned APK.")
+            input.copyTo(output, overwrite = true)
+        }
+    }
+
+    // Step 3: Sign the APK
     private fun signApk(unsignedApk: File, signedApk: File) {
         log("[APK] Signing with test key...")
+        
+        // Try reflection-based external signer first
         try {
             val signerClass = Class.forName("mod.alucard.tn.apksigner.ApkSigner")
             val signer = signerClass.getDeclaredConstructor().newInstance()
@@ -58,13 +98,19 @@ class ApkPackager(
             val result = signMethod.invoke(signer, unsignedApk.absolutePath, signedApk.absolutePath, null) as Boolean
             if (!result) throw RuntimeException("ApkSigner.signWithTestKey returned false")
             log("[APK] APK signed successfully via ApkSigner")
+            return
         } catch (e: Exception) {
-            log("[APK] ApkSigner not available (Reason: ${e.message}), using fallback signing...")
-            signWithJarSigner(unsignedApk, signedApk)
+            log("[APK] ApkSigner not available (Reason: ${e.message}), using apksig library...")
         }
+        
+        // Fallback: Use official apksig library
+        signWithApkSig(unsignedApk, signedApk)
     }
 
-    private fun signWithJarSigner(unsignedApk: File, signedApk: File) {
+    /**
+     * Sign APK using official Google apksig library (v2 + v3 signature schemes)
+     */
+    private fun signWithApkSig(unsignedApk: File, signedApk: File) {
         val pk8 = File(testkeyDir, "testkey.pk8")
         val x509 = File(testkeyDir, "testkey.x509.pem")
 
@@ -75,17 +121,56 @@ class ApkPackager(
         }
 
         try {
+            // Load private key
             val pkBytes = pk8.readBytes()
-            val keySpec = java.security.spec.PKCS8EncodedKeySpec(pkBytes)
-            val privateKey = java.security.KeyFactory.getInstance("RSA").generatePrivate(keySpec)
-            val certFactory = java.security.cert.CertificateFactory.getInstance("X.509")
-            val cert = x509.inputStream().use { certFactory.generateCertificate(it) }
-            unsignedApk.copyTo(signedApk, overwrite = true)
-            log("[APK] APK signed (basic fallback)")
+            val pkcs8Key = stripPkcs8Headers(pkBytes)
+            val keySpec = PKCS8EncodedKeySpec(pkcs8Key)
+            val privateKey = KeyFactory.getInstance("RSA").generatePrivate(keySpec)
+
+            // Load certificate
+            val cert = x509.inputStream().use { 
+                CertificateFactory.getInstance("X.509").generateCertificate(it) as X509Certificate
+            }
+
+            // Use apksig library to sign the APK
+            val signerConfig = ApkSigner.SignerConfig.Builder("testkey", privateKey, listOf(cert))
+                .build()
+            
+            ApkSigner.Builder(listOf(signerConfig))
+                .setInputApk(unsignedApk)
+                .setOutputApk(signedApk)
+                .build()
+                .sign()
+
+            log("[APK] APK signed with apksig library (v2/v3 signature)")
         } catch (e: Exception) {
             log("[APK] WARNING: Signing failed: ${e.message}. Copying unsigned.")
+            e.printStackTrace()
             unsignedApk.copyTo(signedApk, overwrite = true)
         }
+    }
+
+    /**
+     * Strip PKCS#8 PEM headers/footers and decode base64 if needed.
+     * Handles both raw DER and PEM-encoded keys.
+     */
+    private fun stripPkcs8Headers(keyBytes: ByteArray): ByteArray {
+        val content = String(keyBytes)
+        
+        // Check if it's PEM encoded
+        if (content.contains("-----BEGIN")) {
+            val base64Content = content
+                .replace("-----BEGIN PRIVATE KEY-----", "")
+                .replace("-----END PRIVATE KEY-----", "")
+                .replace("-----BEGIN ENCRYPTED PRIVATE KEY-----", "")
+                .replace("-----END ENCRYPTED PRIVATE KEY-----", "")
+                .replace("\\s".toRegex(), "")
+            
+            return android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT)
+        }
+        
+        // Already DER encoded
+        return keyBytes
     }
 
     private fun copyZipEntries(zis: ZipInputStream, zos: ZipOutputStream, excludeSignatureFiles: Boolean) {

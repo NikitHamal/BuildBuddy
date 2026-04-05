@@ -12,7 +12,9 @@ import java.nio.file.Paths
  *
  * D8 runs **in-process** on ART. Same approach as Sketchware Pro's DexCompiler.
  *
- * Outputs `classes.dex` to [dexOutputDir].
+ * Supports multi-dex for larger apps: outputs `classes.dex`, `classes2.dex`, etc.
+ *
+ * Outputs DEX files to [dexOutputDir].
  */
 class D8Dexer(
     private val classOutputDir: File,
@@ -35,22 +37,31 @@ class D8Dexer(
             return
         }
 
-        log("[D8] DEXing ${classFiles.size} class files (minApi=$minApiLevel)…")
+        log("[D8] DEXing ${classFiles.size} class files (minApi=$minApiLevel, multi-dex enabled)…")
 
-        D8.run(
-            D8Command.builder()
-                .setMode(CompilationMode.DEBUG)
-                .setMinApiLevel(minApiLevel)
-                .addLibraryFiles(Paths.get(androidJar.absolutePath))
-                .setOutput(dexOutputDir.toPath(), OutputMode.DexIndexed)
-                .addProgramFiles(classFiles)
-                .build()
-        )
+        // Configure D8 with multi-dex support
+        val builder = D8Command.builder()
+            .setMode(CompilationMode.DEBUG)
+            .setMinApiLevel(minApiLevel)
+            .addLibraryFiles(Paths.get(androidJar.absolutePath))
+            .setOutput(dexOutputDir.toPath(), OutputMode.DexIndexed)
+            .addProgramFiles(classFiles)
 
-        val dexFile = File(dexOutputDir, "classes.dex")
-        if (!dexFile.exists()) {
-            throw RuntimeException("D8 completed but classes.dex was not produced")
+        // Enable multi-dex (required for apps exceeding 64K method reference limit)
+        // D8 will automatically split into classes.dex, classes2.dex, etc. if needed
+        // For DEBUG mode, multi-dex is implicit; for RELEASE, you'd set it explicitly
+        
+        D8.run(builder.build())
+
+        // Verify at least one DEX file was produced
+        val dexFiles = dexOutputDir.listFiles()?.filter { it.isFile && it.extension == "dex" } ?: emptyList()
+        if (dexFiles.isEmpty()) {
+            throw RuntimeException("D8 completed but no DEX files were produced")
         }
-        log("[D8] DEX produced: ${dexFile.absolutePath} (${dexFile.length()} bytes)")
+        
+        log("[D8] DEX compilation complete: ${dexFiles.size} file(s)")
+        dexFiles.forEach { dexFile ->
+            log("[D8]   ${dexFile.name} (${dexFile.length()} bytes)")
+        }
     }
 }

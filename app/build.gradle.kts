@@ -182,6 +182,7 @@ dependencies {
     implementation(libs.ecj)                // Eclipse Java Compiler - runs in-process on ART
     implementation(libs.r8)                 // D8/R8 DEX compiler - runs in-process on ART
     implementation(libs.zipalign.java)      // Pure-Java ZIP alignment
+    implementation(libs.apksig)             // Official APK signing library
     implementation(libs.scpkix.jdk15on)     // APK signing crypto
     implementation(libs.stax.api)           // XML streaming (ECJ dep)
 

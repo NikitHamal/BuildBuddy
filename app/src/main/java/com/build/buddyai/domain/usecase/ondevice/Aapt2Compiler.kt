@@ -33,9 +33,23 @@ class Aapt2Compiler(
     val rJavaDir: String get() = genDir.absolutePath
 
     fun compile() {
-        if (resDir.exists()) {
-            compileResources()
+        // Validate required files
+        if (!manifestFile.exists()) {
+            throw RuntimeException("AndroidManifest.xml not found at: ${manifestFile.absolutePath}")
         }
+
+        if (!androidJar.exists()) {
+            throw RuntimeException("android.jar not found at: ${androidJar.absolutePath}")
+        }
+
+        // Compile resources only if res directory exists
+        if (resDir.exists()) {
+            log("[AAPT2] Found resources in: ${resDir.absolutePath}")
+            compileResources()
+        } else {
+            log("[AAPT2] WARNING: No res directory found at: ${resDir.absolutePath}")
+        }
+        
         linkResources()
     }
 

@@ -74,6 +74,14 @@
 -keep class com.android.tools.r8.** { *; }
 -dontwarn com.android.tools.r8.**
 
+# ApkSig (official APK signing library)
+-keep class com.android.apksig.** { *; }
+-dontwarn com.android.apksig.**
+
+# Zipalign-java (pure Java ZIP alignment)
+-keep class com.iyxan23.zipalignjava.** { *; }
+-dontwarn com.iyxan23.zipalignjava.**
+
 # BouncyCastle (APK signing)
 -keep class org.bouncycastle.** { *; }
 -dontwarn org.bouncycastle.**
