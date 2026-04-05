@@ -17,7 +17,7 @@ data class CreateProjectUiState(
     val description: String = "",
     val language: ProjectLanguage = ProjectLanguage.JAVA,
     val uiFramework: UiFramework = UiFramework.VIEWS,
-    val template: ProjectTemplate = ProjectTemplate.JAVA_ACTIVITY,
+    val template: ProjectTemplate = ProjectTemplate.JAVA_DASHBOARD,
     val minSdk: Int = 26,
     val targetSdk: Int = 35,
     val step: Int = 0,

@@ -4,68 +4,91 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.InstallMobile
+import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.build.buddyai.R
-import com.build.buddyai.core.designsystem.component.*
-import com.build.buddyai.core.designsystem.theme.*
+import com.build.buddyai.core.common.ArtifactLauncher
+import com.build.buddyai.core.common.ChangeSetInfo
+import com.build.buddyai.core.common.SnapshotManager
+import com.build.buddyai.core.designsystem.component.NvCard
+import com.build.buddyai.core.designsystem.component.NvEmptyState
+import com.build.buddyai.core.designsystem.component.NvFilledButton
+import com.build.buddyai.core.designsystem.component.NvLinearProgress
+import com.build.buddyai.core.designsystem.component.NvOutlinedButton
+import com.build.buddyai.core.designsystem.component.NvTextButton
+import com.build.buddyai.core.designsystem.theme.BuildBuddyThemeExtended
+import com.build.buddyai.core.designsystem.theme.NvBorder
+import com.build.buddyai.core.designsystem.theme.NvShapes
+import com.build.buddyai.core.designsystem.theme.NvSpacing
 import com.build.buddyai.core.model.BuildArtifact
+import com.build.buddyai.core.model.BuildRecord
 import com.build.buddyai.core.model.BuildStatus
 import com.build.buddyai.core.model.LogLevel
-import com.build.buddyai.feature.artifacts.ArtifactsViewModel
+import java.text.DecimalFormat
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun BuildWorkspaceScreen(
     projectId: String,
     onNavigateToAgent: () -> Unit
 ) {
-    val buildViewModel: BuildViewModel = hiltViewModel()
-    val artifactsViewModel: ArtifactsViewModel = hiltViewModel()
-    
-    val buildUiState by buildViewModel.uiState.collectAsStateWithLifecycle()
-    val artifactsUiState by artifactsViewModel.uiState.collectAsStateWithLifecycle()
+    val viewModel: BuildViewModel = hiltViewModel()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    
-    var showDeleteDialog by remember { mutableStateOf<BuildArtifact?>(null) }
-    var showLogs by remember { mutableStateOf(true) }
-    var showHistory by remember { mutableStateOf(false) }
-    var showArtifacts by remember { mutableStateOf(true) }
-    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
-    val historyDateFormat = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
+    val timeFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    val longFormat = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
 
     LaunchedEffect(projectId) {
-        buildViewModel.initialize(projectId)
-        artifactsViewModel.loadArtifacts(projectId)
-    }
-    LaunchedEffect(buildUiState.buildStatus) {
-        if (buildUiState.buildStatus == BuildStatus.SUCCESS) {
-            artifactsViewModel.loadArtifacts(projectId)
-        }
+        viewModel.initialize(projectId)
     }
 
     LazyColumn(
@@ -73,405 +96,474 @@ fun BuildWorkspaceScreen(
         contentPadding = PaddingValues(NvSpacing.Md),
         verticalArrangement = Arrangement.spacedBy(NvSpacing.Md)
     ) {
-        // Build Status Card
         item {
-            NvCard(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(NvSpacing.Md)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val (statusIcon, statusColor) = when (buildUiState.buildStatus) {
-                            BuildStatus.SUCCESS -> Icons.Filled.CheckCircle to BuildBuddyThemeExtended.colors.success
-                            BuildStatus.FAILED -> Icons.Filled.Error to MaterialTheme.colorScheme.error
-                            BuildStatus.BUILDING -> Icons.Filled.HourglassTop to MaterialTheme.colorScheme.primary
-                            BuildStatus.CANCELLED -> Icons.Filled.Cancel to MaterialTheme.colorScheme.onSurfaceVariant
-                            else -> Icons.Filled.PlayCircle to MaterialTheme.colorScheme.onSurfaceVariant
-                        }
-                        Icon(statusIcon, contentDescription = null, tint = statusColor, modifier = Modifier.size(28.dp))
-                        Spacer(Modifier.width(NvSpacing.Sm))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                buildUiState.statusMessage.ifEmpty { stringResource(R.string.build_status_idle) },
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            if (buildUiState.isBuilding) {
-                                Text(
-                                    "Build in progress…",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        if (buildUiState.buildStatus == BuildStatus.FAILED) {
-                            NvTonalButton(
-                                text = "Ask AI",
-                                onClick = onNavigateToAgent,
-                                icon = Icons.Filled.Psychology
-                            )
-                        }
-                    }
-                    if (buildUiState.isBuilding) {
-                        Spacer(Modifier.height(NvSpacing.Md))
-                        NvLinearProgress(progress = buildUiState.buildProgress)
-                    }
-                }
+            BuildStatusCard(
+                uiState = uiState,
+                onStartBuild = viewModel::startBuild,
+                onCancelBuild = viewModel::cancelBuild,
+                onCleanBuild = viewModel::cleanBuild,
+                onAskAgent = onNavigateToAgent
+            )
+        }
+
+        if (uiState.problems.isNotEmpty()) {
+            item {
+                ProblemsPane(
+                    problems = uiState.problems,
+                    errorSummary = uiState.errorSummary,
+                    onAskAgent = onNavigateToAgent
+                )
             }
         }
 
-        // Build Controls
-        item {
+        uiState.latestArtifact?.let { artifact ->
+            item {
+                ArtifactDetailsPane(
+                    artifact = artifact,
+                    onInstall = { ArtifactLauncher.install(context, artifact) },
+                    onShare = { ArtifactLauncher.share(context, artifact) }
+                )
+            }
+        }
+
+        if (uiState.buildHistory.isNotEmpty() || uiState.logEntries.isNotEmpty()) {
+            item {
+                BuildTimelinePane(
+                    records = uiState.buildHistory.take(8),
+                    onCopyLogs = if (uiState.logEntries.isNotEmpty()) {
+                        {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val payload = uiState.logEntries.joinToString("\n") { entry ->
+                                "[${timeFormat.format(Date(entry.timestamp))}] ${entry.level.name.first()} ${entry.message}"
+                            }
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Build logs", payload))
+                            Toast.makeText(context, "Build logs copied", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        null
+                    }
+                )
+            }
+        }
+
+        if (uiState.logEntries.isNotEmpty()) {
+            item {
+                LogConsolePane(
+                    entries = uiState.logEntries,
+                    formatter = timeFormat
+                )
+            }
+        }
+
+        if (uiState.snapshots.isNotEmpty() || uiState.changeSets.isNotEmpty()) {
+            item {
+                RestorePointBrowser(
+                    snapshots = uiState.snapshots,
+                    changeSets = uiState.changeSets,
+                    longFormat = longFormat,
+                    onRestoreSnapshot = viewModel::restoreSnapshot,
+                    onRestoreChangeSet = viewModel::restoreChangeSet
+                )
+            }
+        }
+
+        if (!uiState.isBuilding && uiState.buildHistory.isEmpty() && uiState.latestArtifact == null && uiState.problems.isEmpty()) {
+            item {
+                NvEmptyState(
+                    icon = Icons.Filled.Build,
+                    title = "No builds yet",
+                    subtitle = "Run the production build pipeline to generate an artifact, inspect logs, and create restore points.",
+                    modifier = Modifier.padding(vertical = 48.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BuildStatusCard(
+    uiState: BuildUiState,
+    onStartBuild: () -> Unit,
+    onCancelBuild: () -> Unit,
+    onCleanBuild: () -> Unit,
+    onAskAgent: () -> Unit
+) {
+    val (icon, tint) = when (uiState.buildStatus) {
+        BuildStatus.SUCCESS -> Icons.Filled.CheckCircle to BuildBuddyThemeExtended.colors.success
+        BuildStatus.FAILED -> Icons.Filled.ErrorOutline to MaterialTheme.colorScheme.error
+        BuildStatus.CANCELLED -> Icons.Filled.WarningAmber to MaterialTheme.colorScheme.onSurfaceVariant
+        BuildStatus.BUILDING -> Icons.Filled.Build to MaterialTheme.colorScheme.primary
+        else -> Icons.Filled.History to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    NvCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(NvSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(NvSpacing.Md)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(26.dp))
+                Spacer(Modifier.width(NvSpacing.Sm))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = when {
+                            uiState.statusMessage.isNotBlank() -> uiState.statusMessage
+                            uiState.buildStatus == BuildStatus.NONE -> "Build workspace ready"
+                            else -> uiState.buildStatus.displayName
+                        },
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = when {
+                            uiState.isBuilding -> "Build timeline, logs, and warnings update live here."
+                            uiState.buildStatus == BuildStatus.SUCCESS -> "Artifact metadata and install actions are available below."
+                            uiState.buildStatus == BuildStatus.FAILED -> "Problems and logs are ready for diagnosis or repair."
+                            else -> "Run a full validation build whenever you want a fresh artifact."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (uiState.isBuilding) {
+                NvLinearProgress(
+                    progress = uiState.buildProgress,
+                    label = "${(uiState.buildProgress * 100).toInt()}% complete"
+                )
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(NvSpacing.Sm)
             ) {
-                if (buildUiState.isBuilding) {
+                if (uiState.isBuilding) {
                     NvOutlinedButton(
-                        text = stringResource(R.string.build_cancel),
-                        onClick = { buildViewModel.cancelBuild() },
+                        text = "Cancel build",
+                        onClick = onCancelBuild,
                         icon = Icons.Filled.Stop,
                         modifier = Modifier.weight(1f)
                     )
                 } else {
                     NvFilledButton(
-                        text = stringResource(R.string.build_start),
-                        onClick = { buildViewModel.startBuild() },
-                        icon = Icons.Filled.PlayArrow,
+                        text = "Run build",
+                        onClick = onStartBuild,
+                        icon = Icons.Filled.Build,
                         modifier = Modifier.weight(1f)
                     )
                     NvOutlinedButton(
-                        text = stringResource(R.string.build_clean),
-                        onClick = { buildViewModel.cleanBuild() },
+                        text = "Clean outputs",
+                        onClick = onCleanBuild,
                         icon = Icons.Filled.CleaningServices,
                         modifier = Modifier.weight(1f)
                     )
                 }
             }
-        }
 
-        // Error summary
-        if (buildUiState.errorSummary != null) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                    ),
-                    border = BorderStroke(NvBorder.Thin, MaterialTheme.colorScheme.error.copy(alpha = 0.2f))
-                ) {
-                    Column(modifier = Modifier.padding(NvSpacing.Md)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(NvSpacing.Sm))
-                            Text("Build Errors", style = MaterialTheme.typography.titleSmall)
-                        }
-                        Spacer(Modifier.height(NvSpacing.Sm))
-                        SelectionContainer {
-                            Text(
-                                buildUiState.errorSummary!!,
-                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Compatibility warnings
-        if (buildUiState.compatibilityWarnings.isNotEmpty()) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = BuildBuddyThemeExtended.colors.warningContainer,
-                        contentColor = BuildBuddyThemeExtended.colors.warning
-                    ),
-                    border = BorderStroke(NvBorder.Thin, BuildBuddyThemeExtended.colors.warning.copy(alpha = 0.2f))
-                ) {
-                    Column(modifier = Modifier.padding(NvSpacing.Md)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Warning, contentDescription = null, tint = BuildBuddyThemeExtended.colors.warning, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(NvSpacing.Sm))
-                            Text("Compatibility Warnings", style = MaterialTheme.typography.titleSmall)
-                        }
-                        Spacer(Modifier.height(NvSpacing.Sm))
-                        buildUiState.compatibilityWarnings.forEach { warning ->
-                            Text("• $warning", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-            }
-        }
-
-        // Artifacts Section
-        if (artifactsUiState.artifacts.isNotEmpty()) {
-            item {
-                SectionHeader("APK Artifacts", showArtifacts) { showArtifacts = !showArtifacts }
-            }
-            item {
-                AnimatedVisibility(visible = showArtifacts) {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(NvSpacing.Md),
-                        contentPadding = PaddingValues(vertical = NvSpacing.Xs)
-                    ) {
-                        items(artifactsUiState.artifacts, key = { it.id }) { artifact ->
-                            ArtifactCardSmall(
-                                artifact = artifact,
-                                onInstall = { artifactsViewModel.installArtifact(context, artifact) },
-                                onShare = { artifactsViewModel.shareArtifact(context, artifact) },
-                                onDelete = { showDeleteDialog = artifact }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Build Logs Section
-        if (buildUiState.logEntries.isNotEmpty()) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SectionHeader("Build Logs", showLogs, modifier = Modifier.weight(1f)) { showLogs = !showLogs }
-                    if (showLogs) {
-                        TextButton(
-                            onClick = {
-                                val logText = buildUiState.logEntries.joinToString("\n") { entry ->
-                                    "[${dateFormat.format(Date(entry.timestamp))}] ${entry.level.name.first()} ${entry.message}"
-                                }
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("Build Logs", logText))
-                                Toast.makeText(context, context.getString(R.string.common_copied), Toast.LENGTH_SHORT).show()
-                            }
-                        ) {
-                            Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(NvSpacing.Xs))
-                            Text("Copy", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                }
-            }
-            item {
-                AnimatedVisibility(visible = showLogs) {
-                    Surface(
-                        shape = NvShapes.medium,
-                        color = BuildBuddyThemeExtended.colors.editorBackground,
-                        modifier = Modifier.fillMaxWidth(),
-                        border = BorderStroke(NvBorder.Hairline, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    ) {
-                        SelectionContainer {
-                            Column(
-                                modifier = Modifier
-                                    .padding(NvSpacing.Sm)
-                                    .heightIn(max = 400.dp)
-                                    .horizontalScroll(rememberScrollState())
-                            ) {
-                                buildUiState.logEntries.forEach { entry ->
-                                    val color = when (entry.level) {
-                                        LogLevel.ERROR -> MaterialTheme.colorScheme.error
-                                        LogLevel.WARNING -> BuildBuddyThemeExtended.colors.warning
-                                        LogLevel.INFO -> MaterialTheme.colorScheme.onSurface
-                                        LogLevel.DEBUG -> MaterialTheme.colorScheme.onSurfaceVariant
-                                        LogLevel.VERBOSE -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                    }
-                                    Text(
-                                        text = "[${dateFormat.format(Date(entry.timestamp))}] ${entry.level.name.first()} ${entry.message}",
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 11.sp,
-                                            lineHeight = 16.sp
-                                        ),
-                                        color = color,
-                                        softWrap = false
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Build History Section
-        if (buildUiState.buildHistory.isNotEmpty()) {
-            item {
-                SectionHeader("Build History", showHistory) { showHistory = !showHistory }
-            }
-            item {
-                AnimatedVisibility(visible = showHistory) {
-                    Column(verticalArrangement = Arrangement.spacedBy(NvSpacing.Xs)) {
-                        buildUiState.buildHistory.take(5).forEach { record ->
-                            NvCard(modifier = Modifier.fillMaxWidth()) {
-                                Row(
-                                    modifier = Modifier.padding(NvSpacing.Md),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    val (statusColor, statusIcon) = when (record.status) {
-                                        BuildStatus.SUCCESS -> BuildBuddyThemeExtended.colors.success to Icons.Filled.CheckCircle
-                                        BuildStatus.FAILED -> MaterialTheme.colorScheme.error to Icons.Filled.Error
-                                        else -> MaterialTheme.colorScheme.onSurfaceVariant to Icons.Filled.History
-                                    }
-                                    Icon(statusIcon, contentDescription = null, tint = statusColor, modifier = Modifier.size(20.dp))
-                                    Spacer(Modifier.width(NvSpacing.Sm))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(record.status.displayName, style = MaterialTheme.typography.labelLarge, color = statusColor)
-                                        Text(historyDateFormat.format(Date(record.startedAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    if (record.durationMs != null) {
-                                        Text(
-                                            formatDuration(record.durationMs),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Empty state
-        if (buildUiState.buildHistory.isEmpty() && artifactsUiState.artifacts.isEmpty() && !buildUiState.isBuilding) {
-            item {
-                NvEmptyState(
-                    icon = Icons.Filled.Build,
-                    title = stringResource(R.string.build_no_builds),
-                    subtitle = stringResource(R.string.build_no_builds_subtitle),
-                    modifier = Modifier.padding(vertical = NvSpacing.Xxl)
+            if (uiState.buildStatus == BuildStatus.FAILED) {
+                NvOutlinedButton(
+                    text = "Send failure to agent",
+                    onClick = onAskAgent,
+                    icon = Icons.Filled.Psychology,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }
     }
+}
 
-    showDeleteDialog?.let { artifact ->
-        NvAlertDialog(
-            title = "Delete Artifact",
-            message = "Delete ${artifact.fileName}?",
-            confirmText = stringResource(R.string.action_delete),
-            onConfirm = { artifactsViewModel.deleteArtifact(artifact); showDeleteDialog = null },
-            onDismiss = { showDeleteDialog = null },
-            isDestructive = true
-        )
+@Composable
+private fun ProblemsPane(
+    problems: List<String>,
+    errorSummary: String?,
+    onAskAgent: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer
+        ),
+        border = BorderStroke(NvBorder.Thin, MaterialTheme.colorScheme.error.copy(alpha = 0.2f))
+    ) {
+        Column(
+            modifier = Modifier.padding(NvSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(NvSpacing.Sm)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                Spacer(Modifier.width(NvSpacing.Sm))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Problems", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Integrity issues, compatibility blockers, and build failures surface here before or after compilation.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                    )
+                }
+                NvTextButton(text = "Ask agent", onClick = onAskAgent, icon = Icons.Filled.Psychology)
+            }
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(NvSpacing.Xs)) {
+                    problems.forEach { problem ->
+                        Text("• $problem", style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
+                    }
+                    if (!errorSummary.isNullOrBlank() && problems.none { it == errorSummary }) {
+                        Text(errorSummary, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
+                    }
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun SectionHeader(
-    title: String,
-    expanded: Boolean,
-    modifier: Modifier = Modifier,
-    onToggle: () -> Unit
+private fun ArtifactDetailsPane(
+    artifact: BuildArtifact,
+    onInstall: () -> Unit,
+    onShare: () -> Unit
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(top = NvSpacing.Sm),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+    NvCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(NvSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(NvSpacing.Sm)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.InstallMobile, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(NvSpacing.Sm))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Artifact details", style = MaterialTheme.typography.titleSmall)
+                    Text(artifact.fileName, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            ArtifactMetadataRow(label = "Package", value = artifact.packageName)
+            ArtifactMetadataRow(label = "Version", value = "${artifact.versionName} (${artifact.versionCode})")
+            ArtifactMetadataRow(label = "SDK", value = "min ${artifact.minSdk} • target ${artifact.targetSdk}")
+            ArtifactMetadataRow(label = "Size", value = formatBytes(artifact.sizeBytes))
+            ArtifactMetadataRow(label = "Created", value = SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(artifact.createdAt)))
+            Row(horizontalArrangement = Arrangement.spacedBy(NvSpacing.Sm)) {
+                NvFilledButton(text = "Install", onClick = onInstall, icon = Icons.Filled.InstallMobile, modifier = Modifier.weight(1f))
+                NvOutlinedButton(text = "Share", onClick = onShare, icon = Icons.Filled.Share, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArtifactMetadataRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun BuildTimelinePane(
+    records: List<BuildRecord>,
+    onCopyLogs: (() -> Unit)?
+) {
+    NvCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(NvSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(NvSpacing.Sm)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(NvSpacing.Sm))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Build timeline", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Recent build runs with status and duration.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (onCopyLogs != null) {
+                    NvTextButton(text = "Copy logs", onClick = onCopyLogs, icon = Icons.Filled.ContentCopy)
+                }
+            }
+            if (records.isEmpty()) {
+                Text("No build history yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                records.forEach { record -> TimelineRow(record) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimelineRow(record: BuildRecord) {
+    val (statusColor, statusLabel) = when (record.status) {
+        BuildStatus.SUCCESS -> BuildBuddyThemeExtended.colors.success to "Success"
+        BuildStatus.FAILED -> MaterialTheme.colorScheme.error to "Failed"
+        BuildStatus.CANCELLED -> MaterialTheme.colorScheme.onSurfaceVariant to "Cancelled"
+        BuildStatus.BUILDING -> MaterialTheme.colorScheme.primary to "Building"
+        else -> MaterialTheme.colorScheme.onSurfaceVariant to "Idle"
+    }
+    val formatter = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = NvShapes.medium
     ) {
-        Text(title, style = MaterialTheme.typography.titleSmall)
-        IconButton(onClick = onToggle) {
-            Icon(
-                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(NvSpacing.Sm),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier.size(10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(color = statusColor, shape = NvShapes.small, modifier = Modifier.size(8.dp)) {}
+            }
+            Spacer(Modifier.width(NvSpacing.Sm))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(statusLabel, style = MaterialTheme.typography.labelLarge, color = statusColor)
+                Text(formatter.format(Date(record.startedAt)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(
+                text = record.durationMs?.let(::formatDuration) ?: "—",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
 }
 
 @Composable
-private fun ArtifactCardSmall(
-    artifact: BuildArtifact,
-    onInstall: () -> Unit,
-    onShare: () -> Unit,
-    onDelete: () -> Unit
+private fun LogConsolePane(
+    entries: List<com.build.buddyai.core.model.BuildLogEntry>,
+    formatter: SimpleDateFormat
 ) {
-    NvCard(
-        modifier = Modifier.width(260.dp)
-    ) {
-        Column(modifier = Modifier.padding(NvSpacing.Md)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    modifier = Modifier.size(32.dp),
-                    shape = NvShapes.small,
-                    color = BuildBuddyThemeExtended.colors.successContainer.copy(alpha = 0.3f)
-                ) {
-                    Icon(
-                        Icons.Filled.Android,
-                        contentDescription = null,
-                        tint = BuildBuddyThemeExtended.colors.success,
-                        modifier = Modifier.padding(NvSpacing.Xs)
-                    )
-                }
-                Spacer(Modifier.width(NvSpacing.Sm))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        artifact.fileName,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        artifact.packageName,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
-                    Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
-                }
-            }
-
-            Spacer(Modifier.height(NvSpacing.Md))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(NvSpacing.Md)) {
-                Text(
-                    com.build.buddyai.core.common.FileUtils.formatFileSize(artifact.sizeBytes),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    "v${artifact.versionName}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Spacer(Modifier.height(NvSpacing.Md))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(NvSpacing.Sm)) {
-                NvTonalButton(
-                    text = "Install",
-                    onClick = onInstall,
-                    icon = Icons.Filled.InstallMobile,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(
-                    onClick = onShare,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+    NvCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(NvSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(NvSpacing.Sm)
+        ) {
+            Text("Build log console", style = MaterialTheme.typography.titleSmall)
+            Surface(
+                shape = NvShapes.medium,
+                color = BuildBuddyThemeExtended.colors.editorBackground,
+                border = BorderStroke(NvBorder.Hairline, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            ) {
+                SelectionContainer {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp)
+                            .horizontalScroll(rememberScrollState())
+                            .padding(NvSpacing.Sm),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        entries.takeLast(120).forEach { entry ->
+                            Text(
+                                text = "[${formatter.format(Date(entry.timestamp))}] ${entry.level.name.first()} ${entry.message}",
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                color = when (entry.level) {
+                                    LogLevel.ERROR -> MaterialTheme.colorScheme.error
+                                    LogLevel.WARNING -> BuildBuddyThemeExtended.colors.warning
+                                    LogLevel.DEBUG -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    LogLevel.VERBOSE -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                    LogLevel.INFO -> MaterialTheme.colorScheme.onSurface
+                                },
+                                softWrap = false
+                            )
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-private fun formatDuration(ms: Long): String {
-    val seconds = ms / 1000
-    return when {
-        seconds < 60 -> "${seconds}s"
-        seconds < 3600 -> "${seconds / 60}m ${seconds % 60}s"
-        else -> "${seconds / 3600}h ${(seconds % 3600) / 60}m"
+@Composable
+private fun RestorePointBrowser(
+    snapshots: List<SnapshotManager.SnapshotInfo>,
+    changeSets: List<ChangeSetInfo>,
+    longFormat: SimpleDateFormat,
+    onRestoreSnapshot: (String) -> Unit,
+    onRestoreChangeSet: (String) -> Unit
+) {
+    NvCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(NvSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(NvSpacing.Md)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Restore, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(NvSpacing.Sm))
+                Column {
+                    Text("Restore point browser", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Snapshots restore the full project. Change sets roll back only the files touched by an agent pass.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (changeSets.isNotEmpty()) {
+                Text("Change sets", style = MaterialTheme.typography.labelLarge)
+                changeSets.take(8).forEach { changeSet ->
+                    RestorePointRow(
+                        title = changeSet.summary.ifBlank { "Agent change set" },
+                        subtitle = "${changeSet.changeCount} file change(s) • ${longFormat.format(Date(changeSet.createdAt))}",
+                        onRestore = { onRestoreChangeSet(changeSet.path) }
+                    )
+                }
+            }
+
+            if (snapshots.isNotEmpty()) {
+                Text("Snapshots", style = MaterialTheme.typography.labelLarge)
+                snapshots.take(8).forEach { snapshot ->
+                    RestorePointRow(
+                        title = snapshot.fileName,
+                        subtitle = "${snapshot.label} • ${formatBytes(snapshot.sizeBytes)} • ${longFormat.format(Date(snapshot.createdAt))}",
+                        onRestore = { onRestoreSnapshot(snapshot.path) }
+                    )
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun RestorePointRow(
+    title: String,
+    subtitle: String,
+    onRestore: () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = NvShapes.medium
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(NvSpacing.Sm),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.labelLarge)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            NvTextButton(text = "Restore", onClick = onRestore, icon = Icons.Filled.Restore)
+        }
+    }
+}
+
+private fun formatDuration(durationMs: Long): String {
+    val totalSeconds = durationMs / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return if (minutes > 0) "${minutes}m ${seconds}s" else "${seconds}s"
+}
+
+private fun formatBytes(sizeBytes: Long): String {
+    if (sizeBytes <= 0) return "0 B"
+    val units = listOf("B", "KB", "MB", "GB")
+    var value = sizeBytes.toDouble()
+    var index = 0
+    while (value >= 1024 && index < units.lastIndex) {
+        value /= 1024
+        index++
+    }
+    return "${DecimalFormat("0.#").format(value)} ${units[index]}"
 }

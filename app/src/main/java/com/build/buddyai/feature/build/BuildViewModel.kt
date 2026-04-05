@@ -5,6 +5,9 @@ import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.build.buddyai.core.common.BuildCancellationRegistry
+import com.build.buddyai.core.common.ChangeSetInfo
+import com.build.buddyai.core.common.ChangeSetManager
+import com.build.buddyai.core.common.SnapshotManager
 import com.build.buddyai.core.common.BuildForegroundService
 import com.build.buddyai.core.data.repository.ArtifactRepository
 import com.build.buddyai.core.data.repository.BuildRepository
@@ -21,8 +24,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -38,8 +41,17 @@ data class BuildUiState(
     val buildHistory: List<BuildRecord> = emptyList(),
     val currentBuildId: String? = null,
     val lastSuccessfulBuild: BuildRecord? = null,
-    val compatibilityWarnings: List<String> = emptyList()
-)
+    val compatibilityWarnings: List<String> = emptyList(),
+    val latestArtifact: BuildArtifact? = null,
+    val snapshots: List<SnapshotManager.SnapshotInfo> = emptyList(),
+    val changeSets: List<ChangeSetInfo> = emptyList()
+) {
+    val problems: List<String>
+        get() = buildList {
+            compatibilityWarnings.forEach { add(it) }
+            errorSummary?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }
+}
 
 @HiltViewModel
 class BuildViewModel @Inject constructor(
@@ -48,6 +60,8 @@ class BuildViewModel @Inject constructor(
     private val artifactRepository: ArtifactRepository,
     private val buildProjectUseCase: BuildProjectUseCase,
     private val buildCancellationRegistry: BuildCancellationRegistry,
+    private val snapshotManager: SnapshotManager,
+    private val changeSetManager: ChangeSetManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -57,18 +71,28 @@ class BuildViewModel @Inject constructor(
     private var currentProjectId: String? = null
     private var buildJob: Job? = null
     private var buildHistoryJob: Job? = null
+    private var artifactsJob: Job? = null
 
     fun initialize(projectId: String) {
         currentProjectId = projectId
+        refreshRestorePoints()
+
         buildHistoryJob?.cancel()
         buildHistoryJob = viewModelScope.launch {
-            buildRepository.getBuildRecordsByProject(projectId).collect { records ->
+            buildRepository.getBuildRecordsByProject(projectId).collectLatest { records ->
                 _uiState.update {
                     it.copy(
                         buildHistory = records,
                         lastSuccessfulBuild = records.firstOrNull { record -> record.status == BuildStatus.SUCCESS }
                     )
                 }
+            }
+        }
+
+        artifactsJob?.cancel()
+        artifactsJob = viewModelScope.launch {
+            artifactRepository.getArtifactsByProject(projectId).collectLatest { artifacts ->
+                _uiState.update { it.copy(latestArtifact = artifacts.firstOrNull()) }
             }
         }
     }
@@ -80,13 +104,16 @@ class BuildViewModel @Inject constructor(
         buildJob = viewModelScope.launch {
             val project = projectRepository.getProjectById(projectId) ?: return@launch
             val buildId = UUID.randomUUID().toString()
+            runCatching {
+                snapshotManager.createSnapshot(project.id, File(project.projectPath), "pre_build")
+            }
 
             _uiState.update {
                 it.copy(
                     isBuilding = true,
                     buildProgress = 0f,
                     buildStatus = BuildStatus.BUILDING,
-                    statusMessage = "Preparing on-device build…",
+                    statusMessage = "Preparing build…",
                     logEntries = emptyList(),
                     errorSummary = null,
                     currentBuildId = buildId,
@@ -119,19 +146,20 @@ class BuildViewModel @Inject constructor(
                         _uiState.update { it.copy(logEntries = it.logEntries + event.entry) }
                     }
                     is BuildProjectUseCase.BuildEvent.Warning -> {
-                        _uiState.update { it.copy(compatibilityWarnings = it.compatibilityWarnings + event.message) }
+                        _uiState.update { it.copy(compatibilityWarnings = (it.compatibilityWarnings + event.message).distinct()) }
                     }
                     is BuildProjectUseCase.BuildEvent.Success -> {
+                        val completedAt = System.currentTimeMillis()
                         val completedRecord = buildRecord.copy(
                             status = BuildStatus.SUCCESS,
-                            completedAt = System.currentTimeMillis(),
-                            durationMs = System.currentTimeMillis() - buildRecord.startedAt,
+                            completedAt = completedAt,
+                            durationMs = completedAt - buildRecord.startedAt,
                             artifactPath = event.artifactPath,
                             artifactSizeBytes = event.artifactSize,
                             logEntries = _uiState.value.logEntries
                         )
                         buildRepository.updateBuildRecord(completedRecord)
-                        projectRepository.updateProject(project.copy(lastBuildStatus = BuildStatus.SUCCESS, lastBuildAt = System.currentTimeMillis()))
+                        projectRepository.updateProject(project.copy(lastBuildStatus = BuildStatus.SUCCESS, lastBuildAt = completedAt))
                         artifactRepository.insertArtifact(
                             BuildArtifact(
                                 id = UUID.randomUUID().toString(),
@@ -144,7 +172,7 @@ class BuildViewModel @Inject constructor(
                                 packageName = project.packageName,
                                 versionName = "1.0.0",
                                 versionCode = 1,
-                                createdAt = System.currentTimeMillis(),
+                                createdAt = completedAt,
                                 minSdk = project.minSdk,
                                 targetSdk = project.targetSdk
                             )
@@ -154,29 +182,31 @@ class BuildViewModel @Inject constructor(
                         }
                     }
                     is BuildProjectUseCase.BuildEvent.Failure -> {
+                        val completedAt = System.currentTimeMillis()
                         val failedRecord = buildRecord.copy(
                             status = BuildStatus.FAILED,
-                            completedAt = System.currentTimeMillis(),
-                            durationMs = System.currentTimeMillis() - buildRecord.startedAt,
+                            completedAt = completedAt,
+                            durationMs = completedAt - buildRecord.startedAt,
                             errorSummary = event.error,
                             logEntries = _uiState.value.logEntries
                         )
                         buildRepository.updateBuildRecord(failedRecord)
-                        projectRepository.updateProject(project.copy(lastBuildStatus = BuildStatus.FAILED, lastBuildAt = System.currentTimeMillis()))
+                        projectRepository.updateProject(project.copy(lastBuildStatus = BuildStatus.FAILED, lastBuildAt = completedAt))
                         _uiState.update {
                             it.copy(isBuilding = false, buildStatus = BuildStatus.FAILED, statusMessage = "Build failed", errorSummary = event.error)
                         }
                     }
                     is BuildProjectUseCase.BuildEvent.Cancelled -> {
+                        val completedAt = System.currentTimeMillis()
                         val cancelledRecord = buildRecord.copy(
                             status = BuildStatus.CANCELLED,
-                            completedAt = System.currentTimeMillis(),
-                            durationMs = System.currentTimeMillis() - buildRecord.startedAt,
+                            completedAt = completedAt,
+                            durationMs = completedAt - buildRecord.startedAt,
                             errorSummary = event.message,
                             logEntries = _uiState.value.logEntries
                         )
                         buildRepository.updateBuildRecord(cancelledRecord)
-                        projectRepository.updateProject(project.copy(lastBuildStatus = BuildStatus.CANCELLED, lastBuildAt = System.currentTimeMillis()))
+                        projectRepository.updateProject(project.copy(lastBuildStatus = BuildStatus.CANCELLED, lastBuildAt = completedAt))
                         _uiState.update {
                             it.copy(isBuilding = false, buildStatus = BuildStatus.CANCELLED, statusMessage = event.message, errorSummary = null)
                         }
@@ -184,6 +214,7 @@ class BuildViewModel @Inject constructor(
                 }
             }
 
+            refreshRestorePoints()
             context.stopService(Intent(context, BuildForegroundService::class.java))
         }
     }
@@ -202,8 +233,38 @@ class BuildViewModel @Inject constructor(
         viewModelScope.launch {
             val project = currentProjectId?.let { projectRepository.getProjectById(it) } ?: return@launch
             File(project.projectPath, "build").deleteRecursively()
+            File(project.projectPath, "app/build").deleteRecursively()
             File(project.projectPath, ".build").deleteRecursively()
             addLogEntry(LogLevel.INFO, "Build outputs cleaned")
+            refreshRestorePoints()
+        }
+    }
+
+    fun restoreSnapshot(snapshotPath: String) {
+        viewModelScope.launch {
+            val project = currentProjectId?.let { projectRepository.getProjectById(it) } ?: return@launch
+            snapshotManager.restoreSnapshot(project.id, snapshotPath, File(project.projectPath))
+            addLogEntry(LogLevel.INFO, "Restored project from snapshot")
+            refreshRestorePoints()
+        }
+    }
+
+    fun restoreChangeSet(changeSetPath: String) {
+        viewModelScope.launch {
+            val project = currentProjectId?.let { projectRepository.getProjectById(it) } ?: return@launch
+            val reverted = changeSetManager.rollbackChangeSet(File(project.projectPath), changeSetPath)
+            addLogEntry(LogLevel.INFO, "Rolled back ${reverted.size} file change(s) from change set")
+            refreshRestorePoints()
+        }
+    }
+
+    private fun refreshRestorePoints() {
+        val projectId = currentProjectId ?: return
+        _uiState.update {
+            it.copy(
+                snapshots = snapshotManager.listSnapshots(projectId),
+                changeSets = changeSetManager.listChangeSets(projectId)
+            )
         }
     }
 

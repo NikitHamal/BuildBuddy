@@ -206,7 +206,7 @@ private fun TemplateStep(uiState: CreateProjectUiState, viewModel: CreateProject
                 Column(modifier = Modifier.padding(NvSpacing.Sm), verticalArrangement = Arrangement.spacedBy(NvSpacing.Xxs)) {
                     Text("On-device build compatibility", style = MaterialTheme.typography.labelLarge)
                     Text(
-                        "The current validator compiles Java/XML projects on-device. Kotlin and Compose templates are editable in the workspace, but on-device validation will fail until the Kotlin pipeline lands.",
+                        "Legacy-verified Java/View starters compile through the bundled AAPT2 + ECJ + D8 lane. Kotlin and Compose starters use the new Gradle build lane when a Java 17 toolchain is available on-device.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -233,7 +233,14 @@ private fun TemplateStep(uiState: CreateProjectUiState, viewModel: CreateProject
                         Row(horizontalArrangement = Arrangement.spacedBy(NvSpacing.Xs), modifier = Modifier.padding(top = NvSpacing.Xxs)) {
                             NvStatusChip(label = template.language.displayName, containerColor = MaterialTheme.colorScheme.secondaryContainer)
                             NvStatusChip(label = template.uiFramework.displayName, containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                            NvStatusChip(label = template.validationLabel, containerColor = MaterialTheme.colorScheme.primaryContainer)
                         }
+                        Text(
+                            text = template.preferredBuildEngine.displayName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = NvSpacing.Xxs)
+                        )
                     }
                 }
             }

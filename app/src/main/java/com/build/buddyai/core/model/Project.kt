@@ -1,7 +1,6 @@
 package com.build.buddyai.core.model
 
 import kotlinx.serialization.Serializable
-import java.time.Instant
 
 @Serializable
 data class Project(
@@ -11,7 +10,7 @@ data class Project(
     val description: String = "",
     val language: ProjectLanguage = ProjectLanguage.JAVA,
     val uiFramework: UiFramework = UiFramework.VIEWS,
-    val template: ProjectTemplate = ProjectTemplate.JAVA_ACTIVITY,
+    val template: ProjectTemplate = ProjectTemplate.JAVA_DASHBOARD,
     val minSdk: Int = 26,
     val targetSdk: Int = 35,
     val createdAt: Long = System.currentTimeMillis(),
@@ -31,7 +30,14 @@ enum class ProjectLanguage(val displayName: String, val extension: String) {
 @Serializable
 enum class UiFramework(val displayName: String) {
     COMPOSE("Jetpack Compose"),
-    VIEWS("XML Views")
+    VIEWS("Android Views")
+}
+
+@Serializable
+enum class PreferredBuildEngine(val displayName: String) {
+    LEGACY("Legacy on-device"),
+    GRADLE("Gradle + Kotlin"),
+    AUTO("Auto")
 }
 
 @Serializable
@@ -39,13 +45,78 @@ enum class ProjectTemplate(
     val displayName: String,
     val description: String,
     val language: ProjectLanguage,
-    val uiFramework: UiFramework
+    val uiFramework: UiFramework,
+    val preferredBuildEngine: PreferredBuildEngine,
+    val validationLabel: String
 ) {
-    BLANK_COMPOSE("Blank Compose App", "Empty Jetpack Compose project with Material 3", ProjectLanguage.KOTLIN, UiFramework.COMPOSE),
-    BLANK_VIEWS("Blank Views App", "Empty project with XML layouts and View system", ProjectLanguage.JAVA, UiFramework.VIEWS),
-    SINGLE_ACTIVITY_COMPOSE("Single Activity Compose", "Compose project with navigation and scaffold", ProjectLanguage.KOTLIN, UiFramework.COMPOSE),
-    JAVA_ACTIVITY("Java Activity App", "Basic Java project with AppCompatActivity", ProjectLanguage.JAVA, UiFramework.VIEWS),
-    BASIC_UTILITY("Basic Utility App", "Minimal utility app template", ProjectLanguage.JAVA, UiFramework.VIEWS)
+    BLANK_COMPOSE(
+        displayName = "Compose Starter",
+        description = "Production-ready Compose starter with edge-to-edge shell and action cards",
+        language = ProjectLanguage.KOTLIN,
+        uiFramework = UiFramework.COMPOSE,
+        preferredBuildEngine = PreferredBuildEngine.GRADLE,
+        validationLabel = "Gradle verified"
+    ),
+    SINGLE_ACTIVITY_COMPOSE(
+        displayName = "Compose Dashboard",
+        description = "Compose dashboard shell with stats, quick actions, and clean Material 3 layout",
+        language = ProjectLanguage.KOTLIN,
+        uiFramework = UiFramework.COMPOSE,
+        preferredBuildEngine = PreferredBuildEngine.GRADLE,
+        validationLabel = "Gradle verified"
+    ),
+    COMPOSE_SETTINGS(
+        displayName = "Compose Settings",
+        description = "Compose settings surface with grouped toggles and status cards",
+        language = ProjectLanguage.KOTLIN,
+        uiFramework = UiFramework.COMPOSE,
+        preferredBuildEngine = PreferredBuildEngine.GRADLE,
+        validationLabel = "Gradle verified"
+    ),
+    BLANK_VIEWS(
+        displayName = "Views Starter",
+        description = "Build-safe Java/XML starter using platform widgets only",
+        language = ProjectLanguage.JAVA,
+        uiFramework = UiFramework.VIEWS,
+        preferredBuildEngine = PreferredBuildEngine.LEGACY,
+        validationLabel = "Legacy verified"
+    ),
+    JAVA_DASHBOARD(
+        displayName = "Java Dashboard",
+        description = "Modern Java dashboard starter with hero card and action surface",
+        language = ProjectLanguage.JAVA,
+        uiFramework = UiFramework.VIEWS,
+        preferredBuildEngine = PreferredBuildEngine.LEGACY,
+        validationLabel = "Legacy verified"
+    ),
+    BASIC_UTILITY(
+        displayName = "Java Utility",
+        description = "Input-process-output utility starter with clean result card",
+        language = ProjectLanguage.JAVA,
+        uiFramework = UiFramework.VIEWS,
+        preferredBuildEngine = PreferredBuildEngine.LEGACY,
+        validationLabel = "Legacy verified"
+    ),
+    JAVA_FORM(
+        displayName = "Java Form",
+        description = "Validated form starter with scrollable sections and submission flow",
+        language = ProjectLanguage.JAVA,
+        uiFramework = UiFramework.VIEWS,
+        preferredBuildEngine = PreferredBuildEngine.LEGACY,
+        validationLabel = "Legacy verified"
+    ),
+    JAVA_LIST_DETAIL(
+        displayName = "Java List + Detail",
+        description = "List/detail starter with selection state and clean empty panel",
+        language = ProjectLanguage.JAVA,
+        uiFramework = UiFramework.VIEWS,
+        preferredBuildEngine = PreferredBuildEngine.LEGACY,
+        validationLabel = "Legacy verified"
+    );
+
+    companion object {
+        val default: ProjectTemplate = JAVA_DASHBOARD
+    }
 }
 
 @Serializable
