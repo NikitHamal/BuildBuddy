@@ -201,6 +201,18 @@ private fun TemplateStep(uiState: CreateProjectUiState, viewModel: CreateProject
                 modifier = Modifier.padding(bottom = NvSpacing.Xs)
             )
         }
+        item {
+            NvCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(NvSpacing.Sm), verticalArrangement = Arrangement.spacedBy(NvSpacing.Xxs)) {
+                    Text("On-device build compatibility", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        "The current validator compiles Java/XML projects on-device. Kotlin and Compose templates are editable in the workspace, but on-device validation will fail until the Kotlin pipeline lands.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
         items(ProjectTemplate.entries.toList()) { template ->
             NvCard(
                 modifier = Modifier.fillMaxWidth(),

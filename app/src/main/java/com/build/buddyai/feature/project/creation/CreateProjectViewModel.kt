@@ -15,9 +15,9 @@ data class CreateProjectUiState(
     val appName: String = "",
     val packageName: String = "com.example.myapp",
     val description: String = "",
-    val language: ProjectLanguage = ProjectLanguage.KOTLIN,
-    val uiFramework: UiFramework = UiFramework.COMPOSE,
-    val template: ProjectTemplate = ProjectTemplate.BLANK_COMPOSE,
+    val language: ProjectLanguage = ProjectLanguage.JAVA,
+    val uiFramework: UiFramework = UiFramework.VIEWS,
+    val template: ProjectTemplate = ProjectTemplate.JAVA_ACTIVITY,
     val minSdk: Int = 26,
     val targetSdk: Int = 35,
     val step: Int = 0,
@@ -45,8 +45,26 @@ class CreateProjectViewModel @Inject constructor(
 
     fun updatePackageName(name: String) = _uiState.update { it.copy(packageName = name, errors = it.errors - "packageName") }
     fun updateDescription(desc: String) = _uiState.update { it.copy(description = desc) }
-    fun updateLanguage(lang: ProjectLanguage) = _uiState.update { it.copy(language = lang) }
-    fun updateUiFramework(fw: UiFramework) = _uiState.update { it.copy(uiFramework = fw) }
+    fun updateLanguage(lang: ProjectLanguage) = _uiState.update { state ->
+        val compatibleTemplate = ProjectTemplate.entries.firstOrNull {
+            it.language == lang && it.uiFramework == state.uiFramework
+        } ?: ProjectTemplate.entries.firstOrNull { it.language == lang } ?: state.template
+        state.copy(
+            language = compatibleTemplate.language,
+            uiFramework = compatibleTemplate.uiFramework,
+            template = compatibleTemplate
+        )
+    }
+    fun updateUiFramework(fw: UiFramework) = _uiState.update { state ->
+        val compatibleTemplate = ProjectTemplate.entries.firstOrNull {
+            it.uiFramework == fw && it.language == state.language
+        } ?: ProjectTemplate.entries.firstOrNull { it.uiFramework == fw } ?: state.template
+        state.copy(
+            language = compatibleTemplate.language,
+            uiFramework = compatibleTemplate.uiFramework,
+            template = compatibleTemplate
+        )
+    }
     fun updateMinSdk(sdk: Int) = _uiState.update { it.copy(minSdk = sdk) }
     fun updateTargetSdk(sdk: Int) = _uiState.update { it.copy(targetSdk = sdk) }
 
@@ -89,8 +107,8 @@ class CreateProjectViewModel @Inject constructor(
                 name = state.appName.trim(),
                 packageName = state.packageName.trim(),
                 description = state.description.trim(),
-                language = state.language,
-                uiFramework = state.uiFramework,
+                language = state.template.language,
+                uiFramework = state.template.uiFramework,
                 template = state.template,
                 minSdk = state.minSdk,
                 targetSdk = state.targetSdk

@@ -1,17 +1,41 @@
 package com.build.buddyai.feature.agent
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.weight
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.InputChip
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -19,9 +43,13 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.build.buddyai.R
-import com.build.buddyai.core.designsystem.component.*
-import com.build.buddyai.core.designsystem.theme.*
-import com.build.buddyai.core.model.AgentMode
+import com.build.buddyai.core.designsystem.component.NvBackButton
+import com.build.buddyai.core.designsystem.component.NvEmptyState
+import com.build.buddyai.core.designsystem.component.NvFilledButton
+import com.build.buddyai.core.designsystem.component.NvTopBar
+import com.build.buddyai.core.designsystem.theme.NvElevation
+import com.build.buddyai.core.designsystem.theme.NvShapes
+import com.build.buddyai.core.designsystem.theme.NvSpacing
 
 @Composable
 fun AgentScreen(
@@ -42,6 +70,7 @@ fun AgentScreen(
         topBar = {
             NvTopBar(
                 title = "AI Agent",
+                subtitle = "Autonomous build workflow",
                 navigationIcon = { NvBackButton(onBack) },
                 actions = {
                     IconButton(onClick = onNavigateToModels) {
@@ -52,27 +81,11 @@ fun AgentScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            // Mode selector
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = NvSpacing.Sm, vertical = NvSpacing.Xxs),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(NvSpacing.Xxs)) {
-                    items(AgentMode.entries) { mode ->
-                        NvFilterChip(
-                            label = mode.displayName,
-                            selected = uiState.agentMode == mode,
-                            onClick = { viewModel.updateAgentMode(mode) }
-                        )
-                    }
-                }
-                if (uiState.modelName != null) {
-                    Text(uiState.modelName!!, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
+            AgentStatusHeader(
+                modelName = uiState.modelName,
+                providerName = uiState.providerName
+            )
 
-            // Messages
             if (!uiState.hasProvider) {
                 NvEmptyState(
                     icon = Icons.Filled.Key,
@@ -85,7 +98,7 @@ fun AgentScreen(
                 )
             } else if (uiState.messages.isEmpty()) {
                 NvEmptyState(
-                    icon = Icons.Filled.Psychology,
+                    icon = Icons.Filled.Settings,
                     title = stringResource(R.string.agent_empty_title),
                     subtitle = stringResource(R.string.agent_empty_subtitle),
                     modifier = Modifier.weight(1f)
@@ -109,25 +122,24 @@ fun AgentScreen(
                             }
                         }
                     }
-                    if (uiState.pendingDiffs.isNotEmpty()) {
+                    if (uiState.recentDiffs.isNotEmpty()) {
+                        item { RecentChangesCard(diffs = uiState.recentDiffs) }
+                    }
+                    if (uiState.lastBuildStatus != null || uiState.lastBuildSummary != null) {
                         item {
-                            DiffReviewCard(
-                                diffs = uiState.pendingDiffs,
-                                onApply = viewModel::applyDiffs,
-                                onReject = viewModel::rejectDiffs
+                            BuildValidationCard(
+                                status = uiState.lastBuildStatus,
+                                summary = uiState.lastBuildSummary
                             )
                         }
                     }
                 }
             }
 
-            // Input area
             if (uiState.hasProvider) {
                 Surface(
                     tonalElevation = NvElevation.Sm,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .imePadding()
+                    modifier = Modifier.fillMaxWidth().imePadding()
                 ) {
                     Column(modifier = Modifier.padding(NvSpacing.Sm)) {
                         if (uiState.attachedFiles.isNotEmpty()) {
@@ -140,7 +152,7 @@ fun AgentScreen(
                                         selected = true,
                                         onClick = { viewModel.toggleFileAttachment(file) },
                                         label = { Text(file.substringAfterLast("/"), style = MaterialTheme.typography.labelSmall) },
-                                        trailingIcon = { Icon(Icons.Filled.Close, contentDescription = null, Modifier.size(14.dp)) }
+                                        trailingIcon = { Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp)) }
                                     )
                                 }
                             }

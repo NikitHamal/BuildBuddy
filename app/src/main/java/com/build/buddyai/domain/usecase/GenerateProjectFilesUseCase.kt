@@ -161,16 +161,17 @@ fun AppTheme(
 
         val srcDir = File(dir, "app/src/main/java/$pkgPath")
         srcDir.mkdirs()
-        File(srcDir, "MainActivity.kt").writeText("""
-package ${project.packageName}
+        File(srcDir, "MainActivity.java").writeText("""
+package ${project.packageName};
 
-import android.app.Activity
-import android.os.Bundle
+import android.app.Activity;
+import android.os.Bundle;
 
-class MainActivity : Activity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+public class MainActivity extends Activity {
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
     }
 }
 """.trimIndent())
@@ -292,7 +293,7 @@ public class MainActivity extends Activity {
     }
 
     private fun generateBasicUtility(dir: File, project: Project) {
-        generateComposeProject(dir, project)
+        generateJavaProject(dir, project)
     }
 
     private fun generateGradleFiles(dir: File, project: Project) {

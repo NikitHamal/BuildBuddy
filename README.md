@@ -1,41 +1,38 @@
 # BuildBuddy
 
-**Vibe Coding for Android** — a native Android workspace for creating, editing, and orchestrating Android app projects with an AI agent.
+**Vibe Coding for Android** — a native Android workspace for creating, editing, and validating Android app projects with an autonomous AI agent.
 
-## What this repository now does
+## What this repository does now
 
 BuildBuddy provides:
 - project creation, import/export, duplication, and snapshot restore
 - a real in-app code editor and file workspace
-- an agentic AI assistant that can propose complete file diffs inside the project sandbox
-- artifact management for APKs that are actually produced by Gradle
-- real provider integrations for NVIDIA, OpenRouter, and Gemini, including true Gemini SSE streaming
+- an autonomous AI assistant that can inspect the project, write full files, apply changes automatically, and run one validation build pass by default
+- artifact management for APKs produced by the on-device build pipeline
+- provider integrations for NVIDIA, OpenRouter, Gemini, and PAXSENIX with SSE streaming
 
-## Build behavior
+## Current build behavior
 
-BuildBuddy no longer fabricates APK files.
+BuildBuddy currently ships an **on-device build pipeline**:
+1. AAPT2 compiles and links Android resources
+2. ECJ compiles Java sources
+3. D8 produces `classes.dex`
+4. the APK packager merges resources + dex, zipaligns, signs, and verifies the output
+5. the artifact installer launches the platform package installer with a `FileProvider` URI
 
-The build flow now:
-1. validates that a real Gradle wrapper is present
-2. launches `:app:assembleDebug`
-3. streams real Gradle logs into the app
-4. captures the newest APK from `app/build/outputs/apk`
-5. stores that APK as a build artifact only if Gradle actually produced it
+## Important capability boundary
 
-If the wrapper script or wrapper JAR is missing, the build fails transparently instead of generating a fake artifact.
+The current validator is **Java-only** for source compilation. Kotlin and Compose files can still be edited, generated, and reviewed in the workspace, but on-device validation should fail transparently until a Kotlin-capable compiler pipeline is added.
 
-## Security posture improvements in this version
+## Notable hardening in this version
 
-- project file access is sandboxed against path traversal
-- zip extraction rejects Zip Slip payloads
-- Gemini API keys are sent via header instead of URL query params
-- unsafe global HTTP logging is removed
-- foreground build cancel now cancels the active build process
-- artifact deletion removes disk files as well as database rows
-- log export uses `FileProvider` and launches a proper share flow
-- destructive Room fallback migration is removed
-- release protection rules keep Hilt/ViewModel generated classes
+- APK packaging preserves resource entry metadata more safely
+- APK signing now enables v1 + v2 + v3 and verifies the signed archive before reporting success
+- generated APKs are checked with Android package parsing before being surfaced as installable artifacts
+- install flow uses `ACTION_INSTALL_PACKAGE` instead of a generic viewer intent
+- build clean removes both `build/` and `.build/` outputs
+- the agent defaults to inspect → plan internally → edit → validate instead of exposing mode selectors
 
-## Current limitation
+## Release note
 
-This upload does not include a complete tested Android toolchain or build verification in this environment, so changes were applied by source review only. You should run a full device and release validation pass before shipping.
+This environment cannot run a full Android device validation pass, so the patch was produced from deep source review plus architectural tracing. You should still run a real device smoke test after applying it.

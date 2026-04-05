@@ -42,6 +42,10 @@ class BuildProjectUseCase @Inject constructor(
         }
 
         try {
+            detectCompatibilityWarnings(projectDir).forEach { warning ->
+                onEvent(BuildEvent.Warning(warning))
+            }
+
             onEvent(BuildEvent.Progress(0.02f, "Preparing on-device build environment…"))
             onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Starting on-device build for ${project.name}")))
             onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Project path: ${project.projectPath}")))
@@ -92,6 +96,26 @@ class BuildProjectUseCase @Inject constructor(
         }
     }
 
+    private fun detectCompatibilityWarnings(projectDir: File): List<String> {
+        val kotlinFiles = sequenceOf(
+            File(projectDir, "app/src/main/java"),
+            File(projectDir, "app/src/main/kotlin")
+        )
+            .filter { it.exists() }
+            .flatMap { root -> root.walkTopDown().filter { it.isFile && it.extension == "kt" } }
+            .map { it.relativeTo(projectDir).invariantSeparatorsPath }
+            .take(10)
+            .toList()
+
+        return buildList {
+            if (kotlinFiles.isNotEmpty()) {
+                add(
+                    "On-device validation currently compiles Java sources only. Kotlin sources were detected and this build will fail until the Kotlin pipeline lands: ${kotlinFiles.joinToString()}"
+                )
+            }
+        }
+    }
+
     private fun classifyLogLevel(line: String): LogLevel {
         val normalized = line.lowercase(Locale.US)
         return when {
@@ -103,5 +127,5 @@ class BuildProjectUseCase @Inject constructor(
     }
 
     private fun logEntry(level: LogLevel, message: String): BuildLogEntry =
-        BuildLogEntry(timestamp = System.currentTimeMillis(), level = level, message = message, source = "gradle")
+        BuildLogEntry(timestamp = System.currentTimeMillis(), level = level, message = message, source = "ondevice")
 }

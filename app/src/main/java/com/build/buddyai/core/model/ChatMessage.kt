@@ -45,21 +45,21 @@ data class AgentAction(
 
 @Serializable
 enum class AgentActionType {
-    READING_FILE, PLANNING, EDITING_FILE, CREATING_FILE,
-    DELETING_FILE, GENERATING_PATCH, BUILDING, ANALYZING_LOGS,
-    SEARCHING, EXPLAINING
+    READING_FILE,
+    PLANNING,
+    EDITING_FILE,
+    CREATING_FILE,
+    DELETING_FILE,
+    GENERATING_PATCH,
+    BUILDING,
+    ANALYZING_LOGS,
+    SEARCHING,
+    EXPLAINING,
+    VERIFYING
 }
 
 @Serializable
 enum class ActionStatus { PENDING, IN_PROGRESS, COMPLETED, FAILED }
-
-@Serializable
-enum class AgentMode(val displayName: String) {
-    ASK("Ask"),
-    PLAN("Plan"),
-    APPLY("Apply"),
-    AUTO("Auto")
-}
 
 @Serializable
 data class FileDiff(

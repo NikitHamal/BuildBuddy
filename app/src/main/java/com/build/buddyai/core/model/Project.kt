@@ -9,9 +9,9 @@ data class Project(
     val name: String,
     val packageName: String,
     val description: String = "",
-    val language: ProjectLanguage = ProjectLanguage.KOTLIN,
-    val uiFramework: UiFramework = UiFramework.COMPOSE,
-    val template: ProjectTemplate = ProjectTemplate.BLANK_COMPOSE,
+    val language: ProjectLanguage = ProjectLanguage.JAVA,
+    val uiFramework: UiFramework = UiFramework.VIEWS,
+    val template: ProjectTemplate = ProjectTemplate.JAVA_ACTIVITY,
     val minSdk: Int = 26,
     val targetSdk: Int = 35,
     val createdAt: Long = System.currentTimeMillis(),
@@ -42,10 +42,10 @@ enum class ProjectTemplate(
     val uiFramework: UiFramework
 ) {
     BLANK_COMPOSE("Blank Compose App", "Empty Jetpack Compose project with Material 3", ProjectLanguage.KOTLIN, UiFramework.COMPOSE),
-    BLANK_VIEWS("Blank Views App", "Empty project with XML layouts and View system", ProjectLanguage.KOTLIN, UiFramework.VIEWS),
+    BLANK_VIEWS("Blank Views App", "Empty project with XML layouts and View system", ProjectLanguage.JAVA, UiFramework.VIEWS),
     SINGLE_ACTIVITY_COMPOSE("Single Activity Compose", "Compose project with navigation and scaffold", ProjectLanguage.KOTLIN, UiFramework.COMPOSE),
     JAVA_ACTIVITY("Java Activity App", "Basic Java project with AppCompatActivity", ProjectLanguage.JAVA, UiFramework.VIEWS),
-    BASIC_UTILITY("Basic Utility App", "Minimal utility app template", ProjectLanguage.KOTLIN, UiFramework.COMPOSE)
+    BASIC_UTILITY("Basic Utility App", "Minimal utility app template", ProjectLanguage.JAVA, UiFramework.VIEWS)
 }
 
 @Serializable

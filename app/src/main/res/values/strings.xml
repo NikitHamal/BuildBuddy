@@ -10,7 +10,7 @@
     <string name="onboarding_welcome_title">Welcome to BuildBuddy</string>
     <string name="onboarding_welcome_subtitle">Build real Android apps, right from your device</string>
     <string name="onboarding_create_title">Create Projects</string>
-    <string name="onboarding_create_subtitle">Start with templates or describe your idea. Full Kotlin and Compose support.</string>
+    <string name="onboarding_create_subtitle">Start with buildable Java/XML templates today and iterate with the AI workspace.</string>
     <string name="onboarding_ai_title">AI-Powered Coding</string>
     <string name="onboarding_ai_subtitle">Let the AI agent generate, modify, and fix your code intelligently</string>
     <string name="onboarding_build_title">Build &amp; Install</string>

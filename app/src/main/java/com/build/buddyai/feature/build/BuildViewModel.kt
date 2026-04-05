@@ -86,7 +86,7 @@ class BuildViewModel @Inject constructor(
                     isBuilding = true,
                     buildProgress = 0f,
                     buildStatus = BuildStatus.BUILDING,
-                    statusMessage = "Preparing real build…",
+                    statusMessage = "Preparing on-device build…",
                     logEntries = emptyList(),
                     errorSummary = null,
                     currentBuildId = buildId,
@@ -202,7 +202,8 @@ class BuildViewModel @Inject constructor(
         viewModelScope.launch {
             val project = currentProjectId?.let { projectRepository.getProjectById(it) } ?: return@launch
             File(project.projectPath, "build").deleteRecursively()
-            addLogEntry(LogLevel.INFO, "Build directory cleaned")
+            File(project.projectPath, ".build").deleteRecursively()
+            addLogEntry(LogLevel.INFO, "Build outputs cleaned")
         }
     }
 
