@@ -1,13 +1,13 @@
 package com.build.buddyai.domain.usecase
 
 import android.content.Context
+import com.build.buddyai.core.common.BuildCancellationRegistry
+import com.build.buddyai.core.common.BuildProfileManager
 import com.build.buddyai.core.model.BuildLogEntry
+import com.build.buddyai.core.model.BuildProfile
 import com.build.buddyai.core.model.LogLevel
-import com.build.buddyai.core.model.PreferredBuildEngine
 import com.build.buddyai.core.model.Project
-import com.build.buddyai.domain.usecase.ondevice.GradleOnDeviceBuilder
 import com.build.buddyai.domain.usecase.ondevice.OnDeviceBuildPipeline
-import com.build.buddyai.domain.usecase.ondevice.ProjectIntegrityVerifier
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
@@ -21,7 +21,8 @@ import kotlin.coroutines.coroutineContext
 @Singleton
 class BuildProjectUseCase @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val buildCancellationRegistry: com.build.buddyai.core.common.BuildCancellationRegistry
+    private val buildCancellationRegistry: BuildCancellationRegistry,
+    private val buildProfileManager: BuildProfileManager
 ) {
     sealed class BuildEvent {
         data class Progress(val progress: Float, val message: String) : BuildEvent()
@@ -35,6 +36,7 @@ class BuildProjectUseCase @Inject constructor(
     suspend operator fun invoke(
         project: Project,
         buildId: String,
+        buildProfile: BuildProfile = BuildProfile(),
         onEvent: suspend (BuildEvent) -> Unit
     ) = withContext(Dispatchers.IO) {
         val projectDir = File(project.projectPath)
@@ -44,69 +46,59 @@ class BuildProjectUseCase @Inject constructor(
         }
 
         try {
-            val integrity = ProjectIntegrityVerifier.verify(projectDir)
-            integrity.warnings.forEach { onEvent(BuildEvent.Warning(it.message + (it.filePath?.let { path -> " [$path]" } ?: ""))) }
-            if (integrity.errors.isNotEmpty()) {
-                val errorMessage = buildString {
-                    appendLine("Project integrity checks failed:")
-                    integrity.errors.forEach { issue ->
-                        append("• ")
-                        append(issue.message)
-                        issue.filePath?.let { append(" [").append(it).append("]") }
-                        appendLine()
-                    }
-                }.trim()
-                onEvent(BuildEvent.Failure(errorMessage))
-                return@withContext
+            detectCompatibilityWarnings(projectDir).forEach { warning ->
+                onEvent(BuildEvent.Warning(warning))
             }
 
-            val engineSelection = selectEngine(project, integrity)
-            engineSelection.warnings.forEach { onEvent(BuildEvent.Warning(it)) }
-
-            onEvent(BuildEvent.Progress(0.02f, "Preparing build environment…"))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Starting build for ${project.name}")))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Project path: ${project.projectPath}")))
-            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Selected build path: ${engineSelection.engine.displayName}")))
-
-            val result = when (engineSelection.engine) {
-                BuildEngine.LEGACY -> {
-                    onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Build engine: AAPT2 + ECJ + D8 (on-device Java pipeline)")))
-                    val pipeline = OnDeviceBuildPipeline(context)
-                    val buildResult = pipeline.build(
-                        project = project,
-                        buildId = buildId,
-                        onProgress = { fraction, message ->
-                            kotlinx.coroutines.runBlocking {
-                                if (coroutineContext.isActive && !buildCancellationRegistry.isCancelled(buildId)) {
-                                    onEvent(BuildEvent.Progress(fraction, message))
-                                }
-                            }
-                        },
-                        onLog = { message ->
-                            kotlinx.coroutines.runBlocking {
-                                if (coroutineContext.isActive && !buildCancellationRegistry.isCancelled(buildId)) {
-                                    onEvent(BuildEvent.Log(logEntry(classifyLogLevel(message), message)))
-                                }
-                            }
-                        }
+            if (buildProfile.variant.name == "RELEASE") {
+                val signing = buildProfile.signing
+                val secrets = buildProfileManager.getSigningSecrets(project.id)
+                if (signing == null || signing.keystorePath.isBlank() || signing.keyAlias.isBlank() || secrets == null) {
+                    onEvent(
+                        BuildEvent.Failure(
+                            "Release build requires a configured keystore, key alias, store password, and key password. Open the build workspace, import a keystore, and save signing details first."
+                        )
                     )
-                    BuildResult(buildResult.apkPath, buildResult.apkSize)
-                }
-
-                BuildEngine.GRADLE -> {
-                    onEvent(BuildEvent.Progress(0.08f, "Running Gradle build…"))
-                    val builder = GradleOnDeviceBuilder(context = context, projectDir = projectDir) { message ->
-                        kotlinx.coroutines.runBlocking {
-                            if (coroutineContext.isActive && !buildCancellationRegistry.isCancelled(buildId)) {
-                                val level = classifyLogLevel(message)
-                                onEvent(BuildEvent.Log(logEntry(level, message)))
-                            }
-                        }
-                    }
-                    val buildResult = builder.build()
-                    BuildResult(buildResult.apkFile.absolutePath, buildResult.apkFile.length())
+                    return@withContext
                 }
             }
+
+            onEvent(BuildEvent.Progress(0.02f, "Preparing on-device build environment…"))
+            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Starting on-device build for ${project.name}")))
+            onEvent(BuildEvent.Log(logEntry(LogLevel.INFO, "Project path: ${project.projectPath}")))
+            onEvent(
+                BuildEvent.Log(
+                    logEntry(
+                        LogLevel.INFO,
+                        "Build engine: AAPT2 + ECJ + D8 (no JDK required) • variant=${buildProfile.variant.name.lowercase(Locale.US)}"
+                    )
+                )
+            )
+
+            val pipeline = OnDeviceBuildPipeline(context)
+            val signingSecrets = buildProfileManager.getSigningSecrets(project.id)
+
+            val result = pipeline.build(
+                project = project,
+                buildId = buildId,
+                buildProfile = buildProfile,
+                signingSecrets = signingSecrets,
+                onProgress = { fraction, message ->
+                    kotlinx.coroutines.runBlocking {
+                        if (coroutineContext.isActive && !buildCancellationRegistry.isCancelled(buildId)) {
+                            onEvent(BuildEvent.Progress(fraction, message))
+                        }
+                    }
+                },
+                onLog = { message ->
+                    kotlinx.coroutines.runBlocking {
+                        if (coroutineContext.isActive && !buildCancellationRegistry.isCancelled(buildId)) {
+                            val level = classifyLogLevel(message)
+                            onEvent(BuildEvent.Log(logEntry(level, message)))
+                        }
+                    }
+                }
+            )
 
             if (buildCancellationRegistry.isCancelled(buildId)) {
                 onEvent(BuildEvent.Cancelled())
@@ -114,7 +106,7 @@ class BuildProjectUseCase @Inject constructor(
             }
 
             onEvent(BuildEvent.Progress(1f, "Build complete"))
-            onEvent(BuildEvent.Success(result.artifactPath, result.artifactSize))
+            onEvent(BuildEvent.Success(result.apkPath, result.apkSize))
         } catch (e: Exception) {
             val wasCancelled = buildCancellationRegistry.isCancelled(buildId) || e is InterruptedException
             buildCancellationRegistry.unregister(buildId)
@@ -129,35 +121,23 @@ class BuildProjectUseCase @Inject constructor(
         }
     }
 
-    private fun selectEngine(
-        project: Project,
-        integrity: com.build.buddyai.domain.usecase.ondevice.IntegrityReport
-    ): EngineSelection {
-        val preferred = integrity.preferredBuildEngine
-            ?.let { raw -> PreferredBuildEngine.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } }
-            ?: project.template.preferredBuildEngine
-        val index = integrity.symbolIndex
-        val requiresGradle = index.hasKotlin || index.hasCompose || integrity.warnings.any { warning ->
-            warning.message.contains("ConstraintLayout", ignoreCase = true) ||
-                warning.message.contains("AndroidX or Material XML widgets", ignoreCase = true)
-        }
+    private fun detectCompatibilityWarnings(projectDir: File): List<String> {
+        val kotlinFiles = sequenceOf(
+            File(projectDir, "app/src/main/java"),
+            File(projectDir, "app/src/main/kotlin")
+        )
+            .filter { it.exists() }
+            .flatMap { root -> root.walkTopDown().filter { it.isFile && it.extension == "kt" } }
+            .map { it.relativeTo(projectDir).invariantSeparatorsPath }
+            .take(10)
+            .toList()
 
-        if (requiresGradle && !index.hasGradleWrapper) {
-            throw RuntimeException("This project now requires the Gradle build path, but the Gradle wrapper is missing.")
-        }
-
-        return when {
-            requiresGradle -> {
-                val warnings = buildList {
-                    if (preferred == PreferredBuildEngine.LEGACY) {
-                        add("Project metadata still targets the Java on-device build path, so BuildBuddy switched this run to Gradle because the source tree contains Kotlin, Compose, or dependency-backed resources.")
-                    }
-                }
-                EngineSelection(BuildEngine.GRADLE, warnings)
+        return buildList {
+            if (kotlinFiles.isNotEmpty()) {
+                add(
+                    "On-device validation currently compiles Java sources only. Kotlin sources were detected and this build will fail until the Kotlin pipeline lands: ${kotlinFiles.joinToString()}"
+                )
             }
-            preferred == PreferredBuildEngine.GRADLE -> EngineSelection(BuildEngine.GRADLE)
-            preferred == PreferredBuildEngine.AUTO -> EngineSelection(BuildEngine.LEGACY)
-            else -> EngineSelection(BuildEngine.LEGACY)
         }
     }
 
@@ -172,20 +152,5 @@ class BuildProjectUseCase @Inject constructor(
     }
 
     private fun logEntry(level: LogLevel, message: String): BuildLogEntry =
-        BuildLogEntry(timestamp = System.currentTimeMillis(), level = level, message = message, source = "build")
-
-    private enum class BuildEngine(val displayName: String) {
-        LEGACY("On-device"),
-        GRADLE("Gradle")
-    }
-
-    private data class BuildResult(
-        val artifactPath: String,
-        val artifactSize: Long
-    )
-
-    private data class EngineSelection(
-        val engine: BuildEngine,
-        val warnings: List<String> = emptyList()
-    )
+        BuildLogEntry(timestamp = System.currentTimeMillis(), level = level, message = message, source = "ondevice")
 }

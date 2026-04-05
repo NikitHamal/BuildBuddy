@@ -35,6 +35,7 @@ zipalignJava = "1.2.2"
 apksig = "8.7.3"
 scpkixJdk15on = "1.47.0.2"
 staxApi = "1.0-2"
+javaparser = "3.26.3"
 junit = "4.13.2"
 junitExt = "1.2.1"
 espresso = "3.6.1"
@@ -120,6 +121,7 @@ zipalign-java = { group = "com.github.Iyxan23", name = "zipalign-java", version.
 apksig = { group = "com.android.tools.build", name = "apksig", version.ref = "apksig" }
 scpkix-jdk15on = { group = "com.madgag", name = "scpkix-jdk15on", version.ref = "scpkixJdk15on" }
 stax-api = { group = "javax.xml.stream", name = "stax-api", version.ref = "staxApi" }
+javaparser-core = { group = "com.github.javaparser", name = "javaparser-core", version.ref = "javaparser" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }

@@ -3,14 +3,15 @@ package com.build.buddyai.feature.agent
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.build.buddyai.core.agent.AgentChangeSetManager
 import com.build.buddyai.core.agent.AgentContextAssembler
 import com.build.buddyai.core.agent.AgentExecutionPlan
-import com.build.buddyai.core.agent.AgentPlannerProtocol
 import com.build.buddyai.core.agent.AgentTaskProtocol
-import com.build.buddyai.core.agent.ProjectSymbolIndex
-import com.build.buddyai.core.agent.StructuredEditEngine
-import com.build.buddyai.core.common.ChangeSetInfo
-import com.build.buddyai.core.common.ChangeSetManager
+import com.build.buddyai.core.agent.ProjectFailureMemoryStore
+import com.build.buddyai.core.agent.ProjectIntegrityChecker
+import com.build.buddyai.core.agent.AgentToolMemoryStore
+import com.build.buddyai.core.common.BuildArtifactInstaller
+import com.build.buddyai.core.common.BuildProfileManager
 import com.build.buddyai.core.common.FileUtils
 import com.build.buddyai.core.common.SnapshotManager
 import com.build.buddyai.core.data.repository.ArtifactRepository
@@ -22,6 +23,8 @@ import com.build.buddyai.core.model.ActionStatus
 import com.build.buddyai.core.model.AgentAction
 import com.build.buddyai.core.model.AgentActionType
 import com.build.buddyai.core.model.BuildArtifact
+import com.build.buddyai.core.model.BuildProblem
+import com.build.buddyai.core.model.BuildProfile
 import com.build.buddyai.core.model.BuildRecord
 import com.build.buddyai.core.model.BuildStatus
 import com.build.buddyai.core.model.ChatMessage
@@ -29,6 +32,7 @@ import com.build.buddyai.core.model.ChatSession
 import com.build.buddyai.core.model.FileDiff
 import com.build.buddyai.core.model.MessageRole
 import com.build.buddyai.core.model.MessageStatus
+import com.build.buddyai.core.model.ProblemSeverity
 import com.build.buddyai.core.network.AiStreamingService
 import com.build.buddyai.core.network.StreamEvent
 import com.build.buddyai.domain.usecase.BuildProjectUseCase
@@ -51,16 +55,19 @@ data class AgentUiState(
     val currentInput: String = "",
     val attachedFiles: List<String> = emptyList(),
     val recentDiffs: List<FileDiff> = emptyList(),
-    val latestArtifact: BuildArtifact? = null,
-    val changeSets: List<ChangeSetInfo> = emptyList(),
-    val plannerSummary: String? = null,
+    val recentChangeSets: List<AgentChangeSetManager.ChangeSet> = emptyList(),
     val isStreaming: Boolean = false,
     val hasProvider: Boolean = false,
     val providerName: String? = null,
     val modelName: String? = null,
     val currentActions: List<AgentAction> = emptyList(),
+    val currentPlanGoal: String? = null,
+    val currentPlanSteps: List<String> = emptyList(),
     val lastBuildStatus: BuildStatus? = null,
-    val lastBuildSummary: String? = null
+    val lastBuildSummary: String? = null,
+    val latestArtifact: BuildArtifact? = null,
+    val integrityWarnings: List<String> = emptyList(),
+    val problems: List<BuildProblem> = emptyList()
 )
 
 @HiltViewModel
@@ -73,8 +80,13 @@ class AgentViewModel @Inject constructor(
     private val buildProjectUseCase: BuildProjectUseCase,
     private val streamingService: AiStreamingService,
     private val snapshotManager: SnapshotManager,
-    private val changeSetManager: ChangeSetManager,
     private val contextAssembler: AgentContextAssembler,
+    private val changeSetManager: AgentChangeSetManager,
+    private val failureMemoryStore: ProjectFailureMemoryStore,
+    private val toolMemoryStore: AgentToolMemoryStore,
+    private val integrityChecker: ProjectIntegrityChecker,
+    private val buildProfileManager: BuildProfileManager,
+    private val artifactInstaller: BuildArtifactInstaller,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -89,8 +101,13 @@ class AgentViewModel @Inject constructor(
 
     fun initialize(projectId: String) {
         currentProjectId = projectId
-        refreshChangeSets(projectId)
+        loadProviderState()
+        observeSessions(projectId)
+        observeArtifacts(projectId)
+        refreshChangeSets()
+    }
 
+    private fun loadProviderState() {
         viewModelScope.launch {
             val provider = providerRepository.getDefaultProvider()
             _uiState.update {
@@ -101,14 +118,9 @@ class AgentViewModel @Inject constructor(
                 )
             }
         }
+    }
 
-        artifactsJob?.cancel()
-        artifactsJob = viewModelScope.launch {
-            artifactRepository.getArtifactsByProject(projectId).collectLatest { artifacts ->
-                _uiState.update { it.copy(latestArtifact = artifacts.firstOrNull()) }
-            }
-        }
-
+    private fun observeSessions(projectId: String) {
         sessionsJob?.cancel()
         sessionsJob = viewModelScope.launch {
             chatRepository.getSessionsByProject(projectId).collectLatest { sessions ->
@@ -132,6 +144,15 @@ class AgentViewModel @Inject constructor(
         }
     }
 
+    private fun observeArtifacts(projectId: String) {
+        artifactsJob?.cancel()
+        artifactsJob = viewModelScope.launch {
+            artifactRepository.getArtifactsByProject(projectId).collectLatest { artifacts ->
+                _uiState.update { it.copy(latestArtifact = artifacts.firstOrNull()) }
+            }
+        }
+    }
+
     fun updateInput(input: String) = _uiState.update { it.copy(currentInput = input) }
 
     fun toggleFileAttachment(path: String) {
@@ -151,31 +172,31 @@ class AgentViewModel @Inject constructor(
         viewModelScope.launch {
             val projectId = currentProjectId ?: return@launch
             val sessionId = state.sessionId ?: createSession(projectId, input)
-            val userMessage = ChatMessage(
-                id = UUID.randomUUID().toString(),
-                sessionId = sessionId,
-                role = MessageRole.USER,
-                content = input,
-                attachedFiles = state.attachedFiles
+            chatRepository.insertMessage(
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    sessionId = sessionId,
+                    role = MessageRole.USER,
+                    content = input,
+                    attachedFiles = state.attachedFiles
+                )
             )
-            chatRepository.insertMessage(userMessage)
             _uiState.update {
                 it.copy(
                     currentInput = "",
                     attachedFiles = emptyList(),
                     isStreaming = true,
                     recentDiffs = emptyList(),
-                    plannerSummary = null,
                     lastBuildStatus = null,
-                    lastBuildSummary = null
+                    lastBuildSummary = null,
+                    integrityWarnings = emptyList(),
+                    problems = emptyList()
                 )
             }
 
             currentProject()?.let { project ->
                 val projectDir = File(project.projectPath)
-                if (projectDir.exists()) {
-                    snapshotManager.createSnapshot(project.id, projectDir, "pre_agent")
-                }
+                if (projectDir.exists()) snapshotManager.createSnapshot(project.id, projectDir, "pre_agent")
             }
 
             streamJob?.cancel()
@@ -204,30 +225,21 @@ class AgentViewModel @Inject constructor(
             val modelId = provider.selectedModelId ?: provider.models.firstOrNull()?.id ?: return finishWithError(sessionId, "No model selected")
             val project = currentProject() ?: return finishWithError(sessionId, "Project not found")
             val projectDir = File(project.projectPath)
-            val symbolIndex = ProjectSymbolIndex.build(projectDir)
+            val contextSnapshot = contextAssembler.assemble(project.id, projectDir, attachedFiles)
             val plan = requestExecutionPlan(
                 providerType = provider.type,
                 apiKey = apiKey,
                 modelId = modelId,
-                userRequest = visibleUserInput,
-                repairContext = repairContext,
-                projectIndex = symbolIndex,
-                attachedFiles = attachedFiles,
-                temperature = provider.parameters.temperature,
-                maxTokens = provider.parameters.maxTokens,
-                topP = provider.parameters.topP
+                projectContext = contextSnapshot.prompt,
+                userInput = visibleUserInput,
+                repairContext = repairContext
             )
-            val contextSnapshot = contextAssembler.assemble(
-                projectDir = projectDir,
-                userRequest = visibleUserInput,
-                attachedFiles = attachedFiles,
-                preferredFiles = plan.focusFiles
-            )
+            applyPlanUi(plan)
+            toolMemoryStore.record(project.id, "planner", plan?.steps?.joinToString(" • ") ?: "No explicit plan returned", plan?.readFiles.orEmpty())
 
-            _uiState.update { it.copy(plannerSummary = plan.summary.takeIf(String::isNotBlank)) }
             setActions(
-                action(AgentActionType.PLANNING, plan.summary.ifBlank { "Planning the implementation pass" }, ActionStatus.COMPLETED),
-                action(AgentActionType.READING_FILE, "Focused context: ${contextSnapshot.focusFiles.joinToString().ifBlank { "project essentials" }}")
+                action(AgentActionType.READING_FILE, if (repairContext == null) "Using symbol index + local memory to scope the task" else "Reviewing failure memory and repair context"),
+                action(AgentActionType.PLANNING, plan?.steps?.firstOrNull() ?: "Preparing execution plan")
             )
 
             val assistantMsgId = UUID.randomUUID().toString()
@@ -239,49 +251,21 @@ class AgentViewModel @Inject constructor(
                 status = MessageStatus.STREAMING,
                 modelId = modelId
             )
-            _uiState.update { state ->
-                state.copy(
-                    isStreaming = true,
-                    messages = state.messages + placeholder
-                )
-            }
+            _uiState.update { state -> state.copy(isStreaming = true, messages = state.messages + placeholder) }
 
-            val systemPrompt = buildSystemPrompt(
-                projectContext = contextSnapshot.prompt,
-                plan = plan,
-                executionMemory = buildExecutionMemory()
-            )
-            val turnPrompt = if (repairContext == null) {
-                visibleUserInput
-            } else {
-                buildString {
-                    appendLine("Original user request:")
-                    appendLine(visibleUserInput)
-                    appendLine()
-                    appendLine("The previous automated implementation failed on the previous build. Repair the project directly and keep the response actionable.")
-                    appendLine()
-                    appendLine("Build failure context:")
-                    appendLine("```text")
-                    appendLine(repairContext)
-                    appendLine("```")
-                }
-            }
-
+            val systemPrompt = buildExecutionSystemPrompt(contextSnapshot.prompt, plan)
+            val turnPrompt = buildTurnPrompt(visibleUserInput, repairContext)
             val requestMessages = buildRequestMessages(systemPrompt, turnPrompt)
-            val rawContent = collectModelResponse(
+            val rawContent = streamModelResponse(
                 providerType = provider.type,
                 apiKey = apiKey,
                 modelId = modelId,
                 messages = requestMessages,
+                assistantMsgId = assistantMsgId,
+                placeholder = placeholder,
                 temperature = provider.parameters.temperature,
                 maxTokens = provider.parameters.maxTokens,
-                topP = provider.parameters.topP,
-                onToken = { token ->
-                    val updated = placeholder.copy(content = token)
-                    _uiState.update { state ->
-                        state.copy(messages = state.messages.map { if (it.id == assistantMsgId) updated else it })
-                    }
-                }
+                topP = provider.parameters.topP
             )
 
             handleTurnCompletion(
@@ -294,8 +278,7 @@ class AgentViewModel @Inject constructor(
                 attachedFiles = attachedFiles,
                 repairAttempt = repairAttempt,
                 projectDir = projectDir,
-                project = project,
-                plan = plan
+                project = project
             )
         } catch (e: Exception) {
             finishWithError(sessionId, e.message ?: "AI task failed")
@@ -306,58 +289,47 @@ class AgentViewModel @Inject constructor(
         providerType: com.build.buddyai.core.model.ProviderType,
         apiKey: String,
         modelId: String,
-        userRequest: String,
-        repairContext: String?,
-        projectIndex: ProjectSymbolIndex,
-        attachedFiles: List<String>,
-        temperature: Float,
-        maxTokens: Int,
-        topP: Float
-    ): AgentExecutionPlan {
-        val plannerMessages = listOf(
-            mapOf(
-                "role" to "system",
-                "content" to buildString {
-                    appendLine("You are the hidden planner for BuildBuddy. Produce a focused execution plan for the next turn.")
-                    appendLine("Preserve the current language and UI stack unless the user explicitly requests a migration.")
-                    appendLine(AgentPlannerProtocol.instructions())
-                }
-            ),
-            mapOf(
-                "role" to "user",
-                "content" to buildString {
-                    appendLine("User request:")
-                    appendLine(userRequest)
-                    if (repairContext != null) {
-                        appendLine()
-                        appendLine("Repair context:")
-                        appendLine(repairContext)
-                    }
-                    appendLine()
-                    appendLine("Attached files:")
-                    appendLine(attachedFiles.joinToString("\n").ifBlank { "(none)" })
-                    appendLine()
-                    appendLine("Project index and graph:")
-                    appendLine(projectIndex.summary())
-                }
-            )
-        )
+        projectContext: String,
+        userInput: String,
+        repairContext: String?
+    ): AgentExecutionPlan? {
+        val system = buildString {
+            appendLine("You are the BuildBuddy planning engine.")
+            appendLine(AgentTaskProtocol.planningInstructions())
+            appendLine()
+            appendLine("Project context:")
+            appendLine(projectContext)
+        }
+        val user = buildString {
+            appendLine(userInput)
+            repairContext?.takeIf { it.isNotBlank() }?.let {
+                appendLine()
+                appendLine("Repair context:")
+                appendLine(it)
+            }
+        }
         val raw = collectModelResponse(
             providerType = providerType,
             apiKey = apiKey,
             modelId = modelId,
-            messages = plannerMessages,
-            temperature = temperature,
-            maxTokens = minOf(maxTokens, 1500),
-            topP = topP,
-            onToken = null
+            messages = listOf(
+                mapOf("role" to "system", "content" to system),
+                mapOf("role" to "user", "content" to user)
+            ),
+            temperature = 0.2f,
+            maxTokens = 1200,
+            topP = 0.9f
         )
-        return AgentPlannerProtocol.parse(raw)
-            ?: AgentExecutionPlan(
-                summary = if (repairContext == null) "Direct implementation pass" else "Repair implementation pass",
-                focusFiles = attachedFiles,
-                shouldBuild = repairContext != null
+        return AgentTaskProtocol.parsePlan(raw)
+    }
+
+    private fun applyPlanUi(plan: AgentExecutionPlan?) {
+        _uiState.update {
+            it.copy(
+                currentPlanGoal = plan?.goal,
+                currentPlanSteps = plan?.steps.orEmpty()
             )
+        }
     }
 
     private suspend fun collectModelResponse(
@@ -367,8 +339,37 @@ class AgentViewModel @Inject constructor(
         messages: List<Map<String, String>>,
         temperature: Float,
         maxTokens: Int,
-        topP: Float,
-        onToken: ((String) -> Unit)?
+        topP: Float
+    ): String {
+        val contentBuilder = StringBuilder()
+        streamingService.streamMessage(
+            providerType = providerType,
+            apiKey = apiKey,
+            modelId = modelId,
+            messages = messages,
+            temperature = temperature,
+            maxTokens = maxTokens,
+            topP = topP
+        ).collectLatest { event ->
+            when (event) {
+                is StreamEvent.Token -> contentBuilder.append(event.content)
+                is StreamEvent.Done -> Unit
+                is StreamEvent.Error -> throw RuntimeException(event.message)
+            }
+        }
+        return contentBuilder.toString().trim()
+    }
+
+    private suspend fun streamModelResponse(
+        providerType: com.build.buddyai.core.model.ProviderType,
+        apiKey: String,
+        modelId: String,
+        messages: List<Map<String, String>>,
+        assistantMsgId: String,
+        placeholder: ChatMessage,
+        temperature: Float,
+        maxTokens: Int,
+        topP: Float
     ): String {
         val contentBuilder = StringBuilder()
         streamingService.streamMessage(
@@ -383,7 +384,10 @@ class AgentViewModel @Inject constructor(
             when (event) {
                 is StreamEvent.Token -> {
                     contentBuilder.append(event.content)
-                    onToken?.invoke(contentBuilder.toString())
+                    val updated = placeholder.copy(content = contentBuilder.toString())
+                    _uiState.update { state ->
+                        state.copy(messages = state.messages.map { if (it.id == assistantMsgId) updated else it })
+                    }
                 }
                 is StreamEvent.Done -> Unit
                 is StreamEvent.Error -> throw RuntimeException(event.message)
@@ -402,31 +406,17 @@ class AgentViewModel @Inject constructor(
         attachedFiles: List<String>,
         repairAttempt: Int,
         projectDir: File,
-        project: com.build.buddyai.core.model.Project,
-        plan: AgentExecutionPlan
+        project: com.build.buddyai.core.model.Project
     ) {
         val parsed = AgentTaskProtocol.parse(rawContent)
-        val blockedMigrationReason = detectBlockedStackMigration(project, visibleUserInput, parsed)
-        val resolvedMessage = blockedMigrationReason?.let {
-            "Blocked stack migration. ${it.trim()}"
-        } ?: parsed.displayMessage
-        val finalMessage = placeholder.copy(
-            content = resolvedMessage,
-            status = MessageStatus.COMPLETE,
-            modelId = modelId
-        )
+        val finalMessage = placeholder.copy(content = parsed.displayMessage, status = MessageStatus.COMPLETE, modelId = modelId)
         chatRepository.insertMessage(finalMessage)
         _uiState.update { state ->
             state.copy(
                 messages = state.messages.map { if (it.id == assistantMsgId) finalMessage else it },
-                isStreaming = false
+                isStreaming = false,
+                currentPlanSteps = parsed.envelope?.plan ?: state.currentPlanSteps
             )
-        }
-
-        if (blockedMigrationReason != null) {
-            clearActions()
-            persistSystemMessage(sessionId, "BuildBuddy refused to migrate the current ${project.language.displayName}/${project.uiFramework.displayName} stack because the user did not explicitly request a migration.")
-            return
         }
 
         if (!parsed.isTask) {
@@ -435,37 +425,70 @@ class AgentViewModel @Inject constructor(
         }
 
         setActions(
-            action(AgentActionType.EDITING_FILE, "Applying the implementation"),
-            action(AgentActionType.VERIFYING, if (parsed.shouldBuild || plan.shouldBuild) "Preparing build" else "Finishing without build")
+            action(AgentActionType.EDITING_FILE, "Applying planned changes"),
+            action(AgentActionType.VERIFYING, if (parsed.shouldBuild) "Running integrity and build validation" else "Running integrity validation")
         )
 
-        val diffs = applyAgentOperations(projectDir, parsed)
+        val applied = changeSetManager.apply(
+            projectId = project.id,
+            projectDir = projectDir,
+            summary = parsed.displayMessage,
+            writes = parsed.writes,
+            deletes = parsed.deletes,
+            operations = parsed.operations
+        )
+        val diffs = applied.diffs
+        refreshChangeSets()
         _uiState.update { it.copy(recentDiffs = diffs) }
+        toolMemoryStore.record(project.id, "executor", parsed.displayMessage, diffs.map { it.filePath })
 
-        if (diffs.isNotEmpty()) {
-            changeSetManager.recordChangeSet(
-                projectId = project.id,
-                summary = resolvedMessage.ifBlank { plan.summary.ifBlank { visibleUserInput.take(80) } },
-                source = "agent",
-                diffs = diffs
+        val integrity = integrityChecker.validate(project, projectDir)
+        val integrityProblems = integrity.errors.map { BuildProblem(ProblemSeverity.ERROR, "Integrity error", it) } +
+            integrity.warnings.map { BuildProblem(ProblemSeverity.WARNING, "Integrity warning", it) }
+        _uiState.update {
+            it.copy(
+                integrityWarnings = integrity.warnings,
+                problems = integrityProblems
             )
-            refreshChangeSets(project.id)
         }
 
-        if (!(parsed.shouldBuild || plan.shouldBuild)) {
-            setActions(action(AgentActionType.VERIFYING, "Changes applied", ActionStatus.COMPLETED))
+        if (!integrity.isValid) {
+            val signature = failureMemoryStore.recordFailure(project.id, integrity.summary(), diffs.map { it.filePath }, visibleUserInput)
+            setActions(
+                action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
+                action(AgentActionType.VERIFYING, "Integrity validation failed", ActionStatus.FAILED)
+            )
+            if (repairAttempt < 1) {
+                persistSystemMessage(sessionId, "Integrity validation failed, so I am running one automatic repair pass now.")
+                executeAutonomousTurn(
+                    sessionId = sessionId,
+                    visibleUserInput = visibleUserInput,
+                    attachedFiles = (diffs.map { it.filePath } + attachedFiles).distinct(),
+                    repairAttempt = repairAttempt + 1,
+                    repairContext = integrity.summary() + "\n\nFailure signature: $signature"
+                )
+            }
             return
         }
 
-        val buildOutcome = runValidationBuild(project)
+        if (!parsed.shouldBuild) {
+            setActions(action(AgentActionType.VERIFYING, "Integrity validation passed", ActionStatus.COMPLETED))
+            return
+        }
+
+        val buildProfile = buildProfileManager.loadProfile(project.id)
+        val buildOutcome = runValidationBuild(project, buildProfile)
         _uiState.update {
             it.copy(
                 lastBuildStatus = buildOutcome.status,
-                lastBuildSummary = buildOutcome.summary
+                lastBuildSummary = buildOutcome.summary,
+                problems = it.problems + buildOutcome.problems
             )
         }
 
         if (buildOutcome.status == BuildStatus.SUCCESS) {
+            buildOutcome.failureSignature?.let { failureMemoryStore.markResolved(project.id, it, parsed.displayMessage) }
+            toolMemoryStore.record(project.id, "build", buildOutcome.summary)
             setActions(
                 action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
                 action(AgentActionType.BUILDING, buildOutcome.summary, ActionStatus.COMPLETED)
@@ -473,76 +496,36 @@ class AgentViewModel @Inject constructor(
             return
         }
 
+        val failureSignature = failureMemoryStore.recordFailure(project.id, buildOutcome.failureContext ?: buildOutcome.summary, diffs.map { it.filePath }, visibleUserInput)
         setActions(
             action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
             action(AgentActionType.BUILDING, buildOutcome.summary, ActionStatus.FAILED),
-            action(AgentActionType.ANALYZING_LOGS, "Analyzing build failure", ActionStatus.IN_PROGRESS)
+            action(AgentActionType.ANALYZING_LOGS, "Preparing automatic repair pass", ActionStatus.IN_PROGRESS)
         )
 
         if (repairAttempt >= 1) {
-            persistSystemMessage(sessionId, "Automatic build repair stopped after one retry. Review the checks pane and build logs for the remaining issue.")
+            persistSystemMessage(sessionId, "Automatic validation failed after the repair pass. Review the latest build logs and problems pane for the remaining issue.")
             return
         }
 
-        persistSystemMessage(sessionId, "Build failed, so BuildBuddy is running one automatic repair pass.")
+        persistSystemMessage(sessionId, "Build validation failed, so I am running one automatic repair pass now.")
         executeAutonomousTurn(
             sessionId = sessionId,
             visibleUserInput = visibleUserInput,
             attachedFiles = (diffs.map { it.filePath } + attachedFiles).distinct(),
             repairAttempt = repairAttempt + 1,
-            repairContext = buildOutcome.failureContext
+            repairContext = (buildOutcome.failureContext ?: buildOutcome.summary) + "\n\nFailure signature: $failureSignature"
         )
     }
 
-    private suspend fun applyAgentOperations(projectDir: File, parsed: com.build.buddyai.core.agent.ParsedAgentResponse): List<FileDiff> {
-        val diffs = mutableListOf<FileDiff>()
-
-        parsed.edits.forEach { edit ->
-            StructuredEditEngine.apply(projectDir, edit)?.let(diffs::add)
-        }
-
-        parsed.deletes.forEach { rawPath ->
-            val normalized = normalizePathOrNull(rawPath) ?: return@forEach
-            val original = FileUtils.readFileContent(projectDir, normalized).orEmpty()
-            if (original.isNotEmpty()) {
-                FileUtils.deleteFileOrDir(projectDir, normalized)
-                diffs += FileDiff(
-                    filePath = normalized,
-                    originalContent = original,
-                    modifiedContent = "",
-                    additions = 0,
-                    deletions = original.lineSequence().count(),
-                    isDeleted = true
-                )
-            }
-        }
-
-        parsed.writes.forEach { write ->
-            val normalized = normalizePathOrNull(write.path) ?: return@forEach
-            val original = FileUtils.readFileContent(projectDir, normalized).orEmpty()
-            FileUtils.writeFileContent(projectDir, normalized, write.content)
-            diffs += FileDiff(
-                filePath = normalized,
-                originalContent = original,
-                modifiedContent = write.content,
-                additions = write.content.lineSequence().count().coerceAtLeast(1),
-                deletions = original.lineSequence().count(),
-                isNewFile = original.isBlank()
-            )
-        }
-
-        return diffs
-            .distinctBy { it.filePath + it.modifiedContent.hashCode() }
-            .sortedBy { it.filePath }
-    }
-
-    private suspend fun runValidationBuild(project: com.build.buddyai.core.model.Project): BuildOutcome {
+    private suspend fun runValidationBuild(project: com.build.buddyai.core.model.Project, buildProfile: BuildProfile): BuildOutcome {
         val buildId = UUID.randomUUID().toString()
         val buildRecord = BuildRecord(
             id = buildId,
             projectId = project.id,
             status = BuildStatus.BUILDING,
-            startedAt = System.currentTimeMillis()
+            startedAt = System.currentTimeMillis(),
+            buildVariant = buildProfile.variant.name.lowercase()
         )
         buildRepository.insertBuildRecord(buildRecord)
         projectRepository.updateProject(project.copy(lastBuildStatus = BuildStatus.BUILDING))
@@ -552,14 +535,15 @@ class AgentViewModel @Inject constructor(
         var successSize: Long = 0L
         var failureMessage: String? = null
         var cancelled = false
+        val problems = mutableListOf<BuildProblem>()
 
-        setActions(action(AgentActionType.BUILDING, "Running build"))
+        setActions(action(AgentActionType.BUILDING, "Running on-device ${buildProfile.variant.displayName.lowercase()} validation build"))
 
-        buildProjectUseCase(project, buildId) { event ->
+        buildProjectUseCase(project, buildId, buildProfile) { event ->
             when (event) {
                 is BuildProjectUseCase.BuildEvent.Progress -> setActions(action(AgentActionType.BUILDING, event.message))
                 is BuildProjectUseCase.BuildEvent.Log -> logs += event.entry
-                is BuildProjectUseCase.BuildEvent.Warning -> Unit
+                is BuildProjectUseCase.BuildEvent.Warning -> problems += BuildProblem(ProblemSeverity.WARNING, "Build warning", event.message)
                 is BuildProjectUseCase.BuildEvent.Success -> {
                     successPath = event.artifactPath
                     successSize = event.artifactSize
@@ -602,7 +586,16 @@ class AgentViewModel @Inject constructor(
                         targetSdk = project.targetSdk
                     )
                 )
-                BuildOutcome(BuildStatus.SUCCESS, "Validation build passed • ${File(successPath!!).name}", null)
+                if (buildProfile.installAfterBuild) {
+                    artifactInstaller.install(context, File(successPath!!))
+                }
+                BuildOutcome(
+                    status = BuildStatus.SUCCESS,
+                    summary = "Validation build passed • ${File(successPath!!).name}",
+                    failureContext = null,
+                    problems = problems,
+                    failureSignature = null
+                )
             }
             cancelled -> {
                 val cancelledRecord = buildRecord.copy(
@@ -617,7 +610,8 @@ class AgentViewModel @Inject constructor(
                 BuildOutcome(
                     status = BuildStatus.CANCELLED,
                     summary = failureMessage ?: "Validation build cancelled",
-                    failureContext = failureMessage ?: logs.joinToString("\n") { it.message }
+                    failureContext = failureMessage,
+                    problems = problems
                 )
             }
             else -> {
@@ -630,17 +624,65 @@ class AgentViewModel @Inject constructor(
                 )
                 buildRepository.updateBuildRecord(failureRecord)
                 projectRepository.updateProject(project.copy(lastBuildStatus = BuildStatus.FAILED, lastBuildAt = completedAt))
-                val failureContext = buildString {
-                    appendLine(failureMessage ?: "Build failed")
-                    if (logs.isNotEmpty()) {
-                        appendLine()
-                        appendLine("Recent build logs:")
+                val parsedProblems = parseProblems(failureMessage, logs)
+                BuildOutcome(
+                    status = BuildStatus.FAILED,
+                    summary = failureMessage ?: "Validation build failed",
+                    failureContext = buildString {
+                        appendLine(failureMessage ?: "Build failed")
                         logs.takeLast(80).forEach { appendLine(it.message) }
-                    }
-                }.trim()
-                BuildOutcome(BuildStatus.FAILED, failureMessage ?: "Validation build failed", failureContext)
+                    }.trim(),
+                    problems = problems + parsedProblems
+                )
             }
         }
+    }
+
+    private fun parseProblems(failureMessage: String?, logs: List<com.build.buddyai.core.model.BuildLogEntry>): List<BuildProblem> {
+        val lines = buildList {
+            failureMessage?.lineSequence()?.forEach { add(it) }
+            logs.takeLast(80).forEach { add(it.message) }
+        }
+        val pattern = Regex("""([^:\s]+\.(?:xml|java|kt)):(\d+):\s*error:?\s*(.*)""")
+        val matched = lines.mapNotNull { line ->
+            val match = pattern.find(line) ?: return@mapNotNull null
+            BuildProblem(
+                severity = ProblemSeverity.ERROR,
+                title = match.groupValues[3].ifBlank { "Build error" },
+                detail = line.trim(),
+                filePath = match.groupValues[1],
+                lineNumber = match.groupValues[2].toIntOrNull()
+            )
+        }
+        return if (matched.isNotEmpty()) matched.distinctBy { listOf(it.filePath, it.lineNumber, it.title) } else lines
+            .filter { it.contains("error", ignoreCase = true) }
+            .take(10)
+            .map { BuildProblem(ProblemSeverity.ERROR, "Build error", it.trim()) }
+    }
+
+    fun rollbackLatestChangeSet() {
+        viewModelScope.launch {
+            val project = currentProject() ?: return@launch
+            val latest = _uiState.value.recentChangeSets.firstOrNull() ?: return@launch
+            val diffs = changeSetManager.rollback(project.id, latest.id, File(project.projectPath))
+            refreshChangeSets()
+            _uiState.update { it.copy(recentDiffs = diffs, lastBuildSummary = "Rolled back latest change set") }
+        }
+    }
+
+    private fun refreshChangeSets() {
+        val projectId = currentProjectId ?: return
+        _uiState.update { it.copy(recentChangeSets = changeSetManager.list(projectId).take(8)) }
+    }
+
+    fun installLatestArtifact(targetContext: Context): BuildArtifactInstaller.InstallResult {
+        val artifact = _uiState.value.latestArtifact ?: return BuildArtifactInstaller.InstallResult.Error("No built artifact available")
+        return artifactInstaller.install(targetContext, File(artifact.filePath))
+    }
+
+    fun shareLatestArtifact(targetContext: Context): Result<Unit> {
+        val artifact = _uiState.value.latestArtifact ?: return Result.failure(IllegalStateException("No built artifact available"))
+        return artifactInstaller.share(targetContext, File(artifact.filePath))
     }
 
     fun cancelStream() {
@@ -650,11 +692,8 @@ class AgentViewModel @Inject constructor(
                 isStreaming = false,
                 currentActions = emptyList(),
                 messages = it.messages.map { message ->
-                    if (message.status == MessageStatus.STREAMING) {
-                        message.copy(status = MessageStatus.CANCELLED, content = message.content.ifBlank { "Cancelled." })
-                    } else {
-                        message
-                    }
+                    if (message.status == MessageStatus.STREAMING) message.copy(status = MessageStatus.CANCELLED, content = message.content.ifBlank { "Cancelled." })
+                    else message
                 }
             )
         }
@@ -713,7 +752,7 @@ class AgentViewModel @Inject constructor(
 
     private fun buildRequestMessages(systemPrompt: String, turnPrompt: String): List<Map<String, String>> = buildList {
         add(mapOf("role" to "system", "content" to systemPrompt))
-        _uiState.value.messages.takeLast(16).forEach { message ->
+        _uiState.value.messages.takeLast(20).forEach { message ->
             add(
                 mapOf(
                     "role" to when (message.role) {
@@ -728,39 +767,42 @@ class AgentViewModel @Inject constructor(
         add(mapOf("role" to "user", "content" to turnPrompt))
     }
 
-    private fun buildSystemPrompt(
-        projectContext: String,
-        plan: AgentExecutionPlan,
-        executionMemory: String
-    ): String = buildString {
+    private fun buildExecutionSystemPrompt(projectContext: String, plan: AgentExecutionPlan?): String = buildString {
         appendLine("You are BuildBuddy, a production Android builder operating inside a sandboxed project.")
-        appendLine("Default behavior: inspect the index and project graph, follow the current execution plan, prefer surgical structured edits for existing files, and validate changes when appropriate.")
-        appendLine("Preserve the project's current language and UI stack unless the user explicitly asks to migrate it.")
-        appendLine("Never use placeholders, pseudo-diffs, TODO markers, partial snippets, or write outside the project root.")
+        appendLine("Use the local symbol index, failure memory, and tool-result memory to avoid brute forcing whole-file context.")
+        appendLine("Default behavior: investigate, execute the task directly, apply surgical edits when possible, and validate changes when appropriate.")
+        appendLine("Do not ask the user to pick plan/apply/auto modes.")
+        appendLine("When the user only wants an explanation or advice, reply normally and do not change files.")
+        appendLine("When the user asks for implementation, fixes, refactors, audits, or feature work, emit actionable file edits or structured edit operations.")
+        appendLine("Never use placeholders, pseudo-diffs, or partial snippets for files.")
         appendLine()
-        appendLine("Planner summary: ${plan.summary.ifBlank { "direct implementation pass" }}")
-        if (plan.goals.isNotEmpty()) appendLine("Planner goals: ${plan.goals.joinToString()}")
-        if (plan.riskChecks.isNotEmpty()) appendLine("Risk checks: ${plan.riskChecks.joinToString()}")
-        if (plan.focusFiles.isNotEmpty()) appendLine("Planned focus files: ${plan.focusFiles.joinToString()}")
-        appendLine()
-        appendLine("Execution memory:")
-        appendLine(executionMemory)
-        appendLine()
+        if (plan != null) {
+            appendLine("Planner goal: ${plan.goal}")
+            if (plan.steps.isNotEmpty()) appendLine("Planner steps: ${plan.steps.joinToString(" | ")}")
+            if (plan.risks.isNotEmpty()) appendLine("Planner risks: ${plan.risks.joinToString(" | ")}")
+            appendLine()
+        }
         appendLine(AgentTaskProtocol.protocolInstructions())
         appendLine()
         appendLine("Project context:")
         appendLine(projectContext)
     }
 
-    private fun buildExecutionMemory(): String = buildString {
-        val state = _uiState.value
-        appendLine("Recent diffs: ${state.recentDiffs.take(8).joinToString { it.filePath }.ifBlank { "none" }}")
-        appendLine("Latest build summary: ${state.lastBuildSummary ?: "none"}")
-        appendLine("Surgical edit mode: ${if (state.recentDiffs.isEmpty()) "idle" else "active"}")
-        if (state.changeSets.isNotEmpty()) {
-            appendLine("Recent change sets: ${state.changeSets.take(3).joinToString { it.summary }}")
+    private fun buildTurnPrompt(visibleUserInput: String, repairContext: String?): String = if (repairContext == null) {
+        visibleUserInput
+    } else {
+        buildString {
+            appendLine("Original user request:")
+            appendLine(visibleUserInput)
+            appendLine()
+            appendLine("The previous automated implementation failed. Repair the project without asking the user to choose a mode.")
+            appendLine()
+            appendLine("Repair context:")
+            appendLine("```text")
+            appendLine(repairContext)
+            appendLine("```")
         }
-    }.trim()
+    }
 
     private fun action(
         type: AgentActionType,
@@ -792,48 +834,11 @@ class AgentViewModel @Inject constructor(
             null
         }
 
-    private fun detectBlockedStackMigration(
-        project: com.build.buddyai.core.model.Project,
-        userRequest: String,
-        parsed: com.build.buddyai.core.agent.ParsedAgentResponse
-    ): String? {
-        if (!parsed.isTask || allowsMigration(userRequest)) return null
-        val allPaths = parsed.writes.map { it.path } + parsed.edits.map { it.path } + parsed.deletes
-        val allContent = (parsed.writes.map { it.content } + parsed.edits.mapNotNull { it.content }).joinToString("\n")
-        val introducesKotlin = allPaths.any { it.endsWith(".kt") || it.endsWith(".kts") }
-        val introducesCompose = allContent.contains("@Composable") || allContent.contains("setContent {") || allContent.contains("androidx.compose")
-        return when {
-            project.language == com.build.buddyai.core.model.ProjectLanguage.JAVA && introducesKotlin ->
-                "The agent tried to introduce Kotlin files into a Java project without an explicit migration request."
-            project.uiFramework == com.build.buddyai.core.model.UiFramework.VIEWS && introducesCompose ->
-                "The agent tried to move an Android Views project to Compose without an explicit migration request."
-            else -> null
-        }
-    }
-
-    private fun allowsMigration(userRequest: String): Boolean {
-        val normalized = userRequest.lowercase()
-        return listOf(
-            "migrate",
-            "convert",
-            "rewrite in kotlin",
-            "rewrite to kotlin",
-            "switch to kotlin",
-            "use kotlin",
-            "move to compose",
-            "switch to compose",
-            "rewrite in compose",
-            "port to compose"
-        ).any(normalized::contains)
-    }
-
-    private fun refreshChangeSets(projectId: String) {
-        _uiState.update { it.copy(changeSets = changeSetManager.listChangeSets(projectId)) }
-    }
-
     private data class BuildOutcome(
         val status: BuildStatus,
         val summary: String,
-        val failureContext: String?
+        val failureContext: String?,
+        val problems: List<BuildProblem> = emptyList(),
+        val failureSignature: String? = null
     )
 }

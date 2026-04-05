@@ -185,6 +185,7 @@ dependencies {
     implementation(libs.apksig)             // Official APK signing library
     implementation(libs.scpkix.jdk15on)     // APK signing crypto
     implementation(libs.stax.api)           // XML streaming (ECJ dep)
+    implementation(libs.javaparser.core)    // Java AST-aware source editing
 
     // Testing
     testImplementation(libs.junit)

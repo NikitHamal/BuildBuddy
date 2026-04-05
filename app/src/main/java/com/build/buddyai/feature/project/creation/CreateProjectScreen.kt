@@ -204,16 +204,16 @@ private fun TemplateStep(uiState: CreateProjectUiState, viewModel: CreateProject
         item {
             NvCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(NvSpacing.Sm), verticalArrangement = Arrangement.spacedBy(NvSpacing.Xxs)) {
-                    Text("Build path selection", style = MaterialTheme.typography.labelLarge)
+                    Text("On-device build compatibility", style = MaterialTheme.typography.labelLarge)
                     Text(
-                        "Java + Views starters use the bundled on-device build path. Kotlin + Compose starters use the Gradle build path. Blank starters are the default for both stacks.",
+                        "Java/XML templates below are tuned for clean on-device validation. Kotlin templates are included for long-term project creation, but they still need the Kotlin on-device compiler path before validation can pass inside the app.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         }
-        items(ProjectTemplate.entries.toList()) { template ->
+        items(ProjectTemplate.entries.filter { it.language == uiState.language }) { template ->
             NvCard(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = { viewModel.updateTemplate(template) }
@@ -234,12 +234,6 @@ private fun TemplateStep(uiState: CreateProjectUiState, viewModel: CreateProject
                             NvStatusChip(label = template.language.displayName, containerColor = MaterialTheme.colorScheme.secondaryContainer)
                             NvStatusChip(label = template.uiFramework.displayName, containerColor = MaterialTheme.colorScheme.tertiaryContainer)
                         }
-                        Text(
-                            text = "Build path: ${template.preferredBuildEngine.displayName}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = NvSpacing.Xxs)
-                        )
                     }
                 }
             }

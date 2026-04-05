@@ -1,22 +1,22 @@
 package com.build.buddyai.domain.usecase.ondevice
 
 import android.content.Context
+import com.build.buddyai.core.common.BuildProfileManager
 import com.build.buddyai.core.common.FileUtils
+import com.build.buddyai.core.model.BuildProfile
+import com.build.buddyai.core.model.BuildVariant
 import com.build.buddyai.core.model.Project
 import java.io.File
 
 /**
  * Orchestrates the complete on-device build pipeline:
  *
- *   1. Initialize build tools (AAPT2, android.jar, testkey)
- *   2. AAPT2: Compile resources → R.java + resources.ap_
- *   3. ECJ:   Compile Java sources → .class files
- *   4. D8:    Convert .class → classes.dex
- *   5. APK:   Package + sign → final .apk
+ *   1. Initialize build tools (AAPT2, android.jar, signing material)
+ *   2. AAPT2: Compile resources -> R.java + resources.ap_
+ *   3. ECJ:   Compile Java sources -> .class files
+ *   4. D8:    Convert .class -> classes.dex
+ *   5. APK:   Package + sign -> final .apk
  *   6. Parse validation: ensure Android can open the APK we just produced
- *
- * All stages run in-process on Android's ART runtime.
- * No external JDK or Gradle installation required.
  */
 class OnDeviceBuildPipeline(
     private val context: Context
@@ -26,6 +26,8 @@ class OnDeviceBuildPipeline(
     fun build(
         project: Project,
         buildId: String,
+        buildProfile: BuildProfile,
+        signingSecrets: BuildProfileManager.SigningSecrets?,
         onProgress: (Float, String) -> Unit,
         onLog: (String) -> Unit
     ): BuildResult {
@@ -98,13 +100,17 @@ class OnDeviceBuildPipeline(
         onLog("Stage 4/4: APK packaging and signing")
 
         val sanitizedName = project.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
-        val outputApkPath = File(FileUtils.getArtifactsDir(context), "${sanitizedName}_${buildId}.apk").absolutePath
+        val variantName = buildProfile.variant.name.lowercase()
+        val outputApkPath = File(FileUtils.getArtifactsDir(context), "${sanitizedName}_${variantName}_$buildId.apk").absolutePath
 
         val packager = ApkPackager(
             resourcesApkPath = aapt2.resourcesApkPath,
             dexOutputDir = dexOutputDir,
             testkeyDir = env.testkeyDir,
             outputApkPath = outputApkPath,
+            buildVariant = buildProfile.variant,
+            signingConfig = buildProfile.signing,
+            signingSecrets = signingSecrets,
             log = onLog
         )
         packager.packageAndSign()

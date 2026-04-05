@@ -10,7 +10,7 @@ data class Project(
     val description: String = "",
     val language: ProjectLanguage = ProjectLanguage.JAVA,
     val uiFramework: UiFramework = UiFramework.VIEWS,
-    val template: ProjectTemplate = ProjectTemplate.BLANK_VIEWS,
+    val template: ProjectTemplate = ProjectTemplate.BLANK_JAVA_VIEWS,
     val minSdk: Int = 26,
     val targetSdk: Int = 35,
     val createdAt: Long = System.currentTimeMillis(),
@@ -30,14 +30,7 @@ enum class ProjectLanguage(val displayName: String, val extension: String) {
 @Serializable
 enum class UiFramework(val displayName: String) {
     COMPOSE("Jetpack Compose"),
-    VIEWS("Android Views")
-}
-
-@Serializable
-enum class PreferredBuildEngine(val displayName: String) {
-    LEGACY("On-device"),
-    GRADLE("Gradle"),
-    AUTO("Auto")
+    VIEWS("XML Views")
 }
 
 @Serializable
@@ -45,69 +38,20 @@ enum class ProjectTemplate(
     val displayName: String,
     val description: String,
     val language: ProjectLanguage,
-    val uiFramework: UiFramework,
-    val preferredBuildEngine: PreferredBuildEngine
+    val uiFramework: UiFramework
 ) {
-    BLANK_COMPOSE(
-        displayName = "Blank Kotlin",
-        description = "Empty Kotlin + Compose starter with a clean Material 3 shell and no sample product logic",
-        language = ProjectLanguage.KOTLIN,
-        uiFramework = UiFramework.COMPOSE,
-        preferredBuildEngine = PreferredBuildEngine.GRADLE
-    ),
-    SINGLE_ACTIVITY_COMPOSE(
-        displayName = "Compose Dashboard",
-        description = "Compose dashboard shell with stats, quick actions, and clean Material 3 layout",
-        language = ProjectLanguage.KOTLIN,
-        uiFramework = UiFramework.COMPOSE,
-        preferredBuildEngine = PreferredBuildEngine.GRADLE
-    ),
-    COMPOSE_SETTINGS(
-        displayName = "Compose Settings",
-        description = "Compose settings surface with grouped toggles and status cards",
-        language = ProjectLanguage.KOTLIN,
-        uiFramework = UiFramework.COMPOSE,
-        preferredBuildEngine = PreferredBuildEngine.GRADLE
-    ),
-    BLANK_VIEWS(
-        displayName = "Blank Java",
-        description = "Empty Java + XML starter using only build-safe Android Views and resources",
-        language = ProjectLanguage.JAVA,
-        uiFramework = UiFramework.VIEWS,
-        preferredBuildEngine = PreferredBuildEngine.LEGACY
-    ),
-    JAVA_DASHBOARD(
-        displayName = "Java Dashboard",
-        description = "Modern Java dashboard starter with hero card and action surface",
-        language = ProjectLanguage.JAVA,
-        uiFramework = UiFramework.VIEWS,
-        preferredBuildEngine = PreferredBuildEngine.LEGACY
-    ),
-    BASIC_UTILITY(
-        displayName = "Java Utility",
-        description = "Input-process-output utility starter with clean result card",
-        language = ProjectLanguage.JAVA,
-        uiFramework = UiFramework.VIEWS,
-        preferredBuildEngine = PreferredBuildEngine.LEGACY
-    ),
-    JAVA_FORM(
-        displayName = "Java Form",
-        description = "Validated form starter with scrollable sections and submission flow",
-        language = ProjectLanguage.JAVA,
-        uiFramework = UiFramework.VIEWS,
-        preferredBuildEngine = PreferredBuildEngine.LEGACY
-    ),
-    JAVA_LIST_DETAIL(
-        displayName = "Java List + Detail",
-        description = "List/detail starter with selection state and clean empty panel",
-        language = ProjectLanguage.JAVA,
-        uiFramework = UiFramework.VIEWS,
-        preferredBuildEngine = PreferredBuildEngine.LEGACY
-    );
+    BLANK_COMPOSE("Blank Compose App", "Empty Jetpack Compose project with Material 3", ProjectLanguage.KOTLIN, UiFramework.COMPOSE),
+    SINGLE_ACTIVITY_COMPOSE("Single Activity Compose", "Compose project with navigation and scaffold", ProjectLanguage.KOTLIN, UiFramework.COMPOSE),
 
-    companion object {
-        val default: ProjectTemplate = BLANK_VIEWS
-    }
+    BLANK_JAVA_VIEWS("Blank Java App", "Production-safe Java/XML starter for on-device builds", ProjectLanguage.JAVA, UiFramework.VIEWS),
+    BLANK_KOTLIN_VIEWS("Blank Kotlin App", "Lean Kotlin/XML starter selected by default for Kotlin", ProjectLanguage.KOTLIN, UiFramework.VIEWS),
+    JAVA_DASHBOARD("Java Dashboard App", "Analytics-style dashboard with cards and actions", ProjectLanguage.JAVA, UiFramework.VIEWS),
+    JAVA_FORM("Java Form App", "Structured form workflow with validation-ready layout", ProjectLanguage.JAVA, UiFramework.VIEWS),
+    JAVA_MASTER_DETAIL("Java Master Detail", "Two-pane-ready list/detail starter using framework views", ProjectLanguage.JAVA, UiFramework.VIEWS),
+
+    BLANK_VIEWS("Legacy Blank Views", "Backwards-compatible Java XML template", ProjectLanguage.JAVA, UiFramework.VIEWS),
+    JAVA_ACTIVITY("Legacy Java Activity", "Backwards-compatible Java activity template", ProjectLanguage.JAVA, UiFramework.VIEWS),
+    BASIC_UTILITY("Legacy Utility App", "Backwards-compatible minimal utility template", ProjectLanguage.JAVA, UiFramework.VIEWS)
 }
 
 @Serializable

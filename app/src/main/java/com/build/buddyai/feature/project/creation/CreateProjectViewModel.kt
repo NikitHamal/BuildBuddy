@@ -3,16 +3,10 @@ package com.build.buddyai.feature.project.creation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.build.buddyai.core.data.repository.ProjectRepository
-import com.build.buddyai.core.model.Project
-import com.build.buddyai.core.model.ProjectLanguage
-import com.build.buddyai.core.model.ProjectTemplate
-import com.build.buddyai.core.model.UiFramework
+import com.build.buddyai.core.model.*
 import com.build.buddyai.domain.usecase.GenerateProjectFilesUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
@@ -23,7 +17,7 @@ data class CreateProjectUiState(
     val description: String = "",
     val language: ProjectLanguage = ProjectLanguage.JAVA,
     val uiFramework: UiFramework = UiFramework.VIEWS,
-    val template: ProjectTemplate = ProjectTemplate.BLANK_VIEWS,
+    val template: ProjectTemplate = ProjectTemplate.BLANK_JAVA_VIEWS,
     val minSdk: Int = 26,
     val targetSdk: Int = 35,
     val step: Int = 0,
@@ -51,25 +45,32 @@ class CreateProjectViewModel @Inject constructor(
 
     fun updatePackageName(name: String) = _uiState.update { it.copy(packageName = name, errors = it.errors - "packageName") }
     fun updateDescription(desc: String) = _uiState.update { it.copy(description = desc) }
-
     fun updateLanguage(lang: ProjectLanguage) = _uiState.update { state ->
-        val template = defaultTemplate(lang = lang, framework = state.uiFramework)
+        val preferred = when (lang) {
+            ProjectLanguage.JAVA -> ProjectTemplate.BLANK_JAVA_VIEWS
+            ProjectLanguage.KOTLIN -> ProjectTemplate.BLANK_KOTLIN_VIEWS
+        }
+        val compatibleTemplate = ProjectTemplate.entries.firstOrNull {
+            it == preferred && it.uiFramework == state.uiFramework
+        } ?: ProjectTemplate.entries.firstOrNull {
+            it.language == lang && it.uiFramework == state.uiFramework
+        } ?: ProjectTemplate.entries.firstOrNull { it.language == lang } ?: state.template
         state.copy(
-            language = template.language,
-            uiFramework = template.uiFramework,
-            template = template
+            language = compatibleTemplate.language,
+            uiFramework = compatibleTemplate.uiFramework,
+            template = compatibleTemplate
         )
     }
-
     fun updateUiFramework(fw: UiFramework) = _uiState.update { state ->
-        val template = defaultTemplate(lang = state.language, framework = fw)
+        val compatibleTemplate = ProjectTemplate.entries.firstOrNull {
+            it.uiFramework == fw && it.language == state.language
+        } ?: ProjectTemplate.entries.firstOrNull { it.uiFramework == fw } ?: state.template
         state.copy(
-            language = template.language,
-            uiFramework = template.uiFramework,
-            template = template
+            language = compatibleTemplate.language,
+            uiFramework = compatibleTemplate.uiFramework,
+            template = compatibleTemplate
         )
     }
-
     fun updateMinSdk(sdk: Int) = _uiState.update { it.copy(minSdk = sdk) }
     fun updateTargetSdk(sdk: Int) = _uiState.update { it.copy(targetSdk = sdk) }
 
@@ -127,15 +128,5 @@ class CreateProjectViewModel @Inject constructor(
     private fun isValidPackageName(name: String): Boolean {
         val regex = Regex("^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,}$")
         return regex.matches(name) && !name.contains("..")
-    }
-
-    private fun defaultTemplate(lang: ProjectLanguage, framework: UiFramework): ProjectTemplate {
-        return when (lang to framework) {
-            ProjectLanguage.JAVA to UiFramework.VIEWS -> ProjectTemplate.BLANK_VIEWS
-            ProjectLanguage.KOTLIN to UiFramework.COMPOSE -> ProjectTemplate.BLANK_COMPOSE
-            ProjectLanguage.KOTLIN to UiFramework.VIEWS -> ProjectTemplate.BLANK_VIEWS
-            ProjectLanguage.JAVA to UiFramework.COMPOSE -> ProjectTemplate.BLANK_COMPOSE
-            else -> ProjectTemplate.default
-        }
     }
 }
