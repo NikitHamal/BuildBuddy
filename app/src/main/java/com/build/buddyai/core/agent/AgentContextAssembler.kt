@@ -28,6 +28,7 @@ class AgentContextAssembler @Inject constructor(
         attachedFiles: List<String>,
         focusHint: String,
         buildHistory: List<BuildRecord>,
+        memoryContext: ProjectFailureMemoryStore.MemoryContext,
         maxChars: Int = 120_000
     ): ProjectContextSnapshot {
         val normalizedAttached = attachedFiles
@@ -78,7 +79,7 @@ class AgentContextAssembler @Inject constructor(
         appendChunk("\n\n")
         appendChunk(symbolIndex.toPrompt())
         appendChunk("\n\n")
-        appendChunk(failureMemoryStore.summarize(projectId))
+        appendChunk(failureMemoryStore.summarize(projectId, memoryContext))
         appendChunk("\n\n")
         appendChunk(toolMemoryStore.summarize(projectId))
         appendChunk("\n\n")

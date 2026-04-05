@@ -55,7 +55,17 @@ class ProjectDiagnosticsEngine @Inject constructor(
             }
         }
 
-        problems += dependencyManager.snapshot(projectDir).issues
+        problems += dependencyManager.scan(projectDir).warnings.map {
+            BuildProblem(
+                severity = when (it.severity) {
+                    ProjectDependencyManager.Severity.INFO -> ProblemSeverity.INFO
+                    ProjectDependencyManager.Severity.WARNING -> ProblemSeverity.WARNING
+                    ProjectDependencyManager.Severity.ERROR -> ProblemSeverity.ERROR
+                },
+                title = it.title,
+                detail = it.detail
+            )
+        }
 
         if (buildProfile.variant.name == "RELEASE") {
             val signing = buildProfile.signing

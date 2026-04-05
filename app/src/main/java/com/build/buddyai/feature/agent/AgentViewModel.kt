@@ -321,7 +321,8 @@ class AgentViewModel @Inject constructor(
                 projectDir = projectDir,
                 attachedFiles = attachedFiles,
                 focusHint = visibleUserInput,
-                buildHistory = buildRepository.getBuildRecordsByProjectNow(project.id).take(8)
+                buildHistory = buildRepository.getBuildRecordsByProjectNow(project.id).take(8),
+                memoryContext = buildMemoryContext(project, visibleUserInput)
             )
             val plan = requestExecutionPlan(
                 providerType = provider.type,
@@ -721,7 +722,13 @@ class AgentViewModel @Inject constructor(
         }
 
         if (!integrity.isValid) {
-            val signature = failureMemoryStore.recordFailure(project.id, integrity.summary(), diffs.map { it.filePath }, visibleUserInput)
+            val signature = failureMemoryStore.recordFailure(
+                projectId = project.id,
+                contextText = integrity.summary(),
+                editedFiles = diffs.map { it.filePath },
+                request = visibleUserInput,
+                memoryContext = buildMemoryContext(project, visibleUserInput)
+            )
             setActions(
                 action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
                 action(AgentActionType.VERIFYING, "Integrity validation failed", ActionStatus.FAILED)
@@ -766,7 +773,13 @@ class AgentViewModel @Inject constructor(
             return
         }
 
-        val failureSignature = failureMemoryStore.recordFailure(project.id, buildOutcome.failureContext ?: buildOutcome.summary, diffs.map { it.filePath }, visibleUserInput)
+        val failureSignature = failureMemoryStore.recordFailure(
+            projectId = project.id,
+            contextText = buildOutcome.failureContext ?: buildOutcome.summary,
+            editedFiles = diffs.map { it.filePath },
+            request = visibleUserInput,
+            memoryContext = buildMemoryContext(project, visibleUserInput)
+        )
         setActions(
             action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
             action(AgentActionType.BUILDING, buildOutcome.summary, ActionStatus.FAILED),
@@ -1149,4 +1162,12 @@ class AgentViewModel @Inject constructor(
         val problems: List<BuildProblem> = emptyList(),
         val failureSignature: String? = null
     )
+    private fun buildMemoryContext(project: com.build.buddyai.core.model.Project, requestHint: String = ""): ProjectFailureMemoryStore.MemoryContext {
+        return ProjectFailureMemoryStore.MemoryContext(
+            templateFamily = project.template.name,
+            buildEngine = "on-device-aapt2-ecj-d8",
+            language = project.language.name,
+            requestHint = requestHint
+        )
+    }
 }
