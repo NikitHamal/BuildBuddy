@@ -117,6 +117,7 @@ class AiApiService @Inject constructor(
         }
     }
 
+    @JvmName("sendMessageRaw")
     suspend fun sendMessage(
         providerType: ProviderType,
         apiKey: String,

@@ -117,6 +117,7 @@ class AiStreamingService @Inject constructor(
         awaitClose { eventSource.cancel() }
     }.flowOn(Dispatchers.IO)
 
+    @JvmName("streamMessageRaw")
     fun streamMessage(
         providerType: ProviderType,
         apiKey: String,
