@@ -137,7 +137,15 @@ class AgentChangeSetManager @Inject constructor(
                     if (op.target.isNotEmpty()) current = current.replace(op.target, op.payload)
                 }
                 "text_replace_regex" -> {
-                    if (op.target.isNotEmpty()) current = current.replace(Regex(op.target), op.payload)
+                    if (op.target.isNotEmpty()) {
+                        val regex = runCatching { Regex(op.target) }.getOrNull()
+                        current = if (regex != null) {
+                            current.replace(regex, op.payload)
+                        } else {
+                            // Invalid regex pattern from model — fall back to literal replacement
+                            current.replace(op.target, op.payload)
+                        }
+                    }
                 }
             }
         }
