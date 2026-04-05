@@ -155,10 +155,10 @@ fun BuildWorkspaceScreen(
                         )
                     }
                     HorizontalDivider()
-                    Text("Release signing", style = MaterialTheme.typography.titleSmall)
-                    if (uiState.buildProfile.signing != null) {
+                    val signing = uiState.buildProfile.signing
+                    if (signing != null) {
                         Text(
-                            "Keystore: ${uiState.buildProfile.signing.keystoreFileName}",
+                            "Keystore: ${signing.keystoreFileName}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -288,6 +288,7 @@ fun BuildWorkspaceScreen(
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
                                 Surface(
                                     color = when (entry.status) {
+                                        com.build.buddyai.core.model.ActionStatus.PENDING -> MaterialTheme.colorScheme.surfaceVariant
                                         com.build.buddyai.core.model.ActionStatus.FAILED -> MaterialTheme.colorScheme.errorContainer
                                         com.build.buddyai.core.model.ActionStatus.IN_PROGRESS -> MaterialTheme.colorScheme.primaryContainer
                                         com.build.buddyai.core.model.ActionStatus.COMPLETED -> MaterialTheme.colorScheme.secondaryContainer

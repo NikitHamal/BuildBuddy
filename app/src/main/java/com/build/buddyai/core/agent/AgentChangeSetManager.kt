@@ -6,6 +6,8 @@ import com.build.buddyai.core.model.FileDiff
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
@@ -139,7 +141,7 @@ class AgentChangeSetManager @Inject constructor(
         val entries = (list(projectId) + changeSet).sortedByDescending { it.createdAt }.take(20)
         val file = listFile(projectId)
         file.parentFile?.mkdirs()
-        file.writeText(json.encodeToString(entries))
+        file.writeText(json.encodeToString<List<ChangeSet>>(entries))
     }
 
     private fun listFile(projectId: String) = File(context.filesDir, "agent_change_sets/$projectId.json")

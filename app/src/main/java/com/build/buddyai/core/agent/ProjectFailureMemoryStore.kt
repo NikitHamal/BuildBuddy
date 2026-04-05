@@ -4,6 +4,8 @@ import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -87,13 +89,13 @@ class ProjectFailureMemoryStore @Inject constructor(
 
     private fun load(projectId: String): List<FailurePattern> {
         val file = file(projectId)
-        return if (!file.exists()) emptyList() else runCatching { json.decodeFromString(file.readText()) }.getOrDefault(emptyList())
+        return if (!file.exists()) emptyList() else runCatching { json.decodeFromString<List<FailurePattern>>(file.readText()) }.getOrDefault(emptyList())
     }
 
     private fun save(projectId: String, entries: List<FailurePattern>) {
         file(projectId).apply {
             parentFile?.mkdirs()
-            writeText(json.encodeToString(entries.sortedByDescending { it.lastSeenAt }.take(30)))
+            writeText(json.encodeToString<List<FailurePattern>>(entries.sortedByDescending { it.lastSeenAt }.take(30)))
         }
     }
 
