@@ -5,9 +5,9 @@ import com.build.buddyai.core.common.FileUtils
 import com.build.buddyai.core.model.FileDiff
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
@@ -21,38 +21,6 @@ class AgentChangeSetManager @Inject constructor(
     private val xmlDomEditor: XmlDomEditor
 ) {
 
-    fun preview(
-        projectDir: File,
-        writes: List<AgentFileWrite>,
-        deletes: List<String>,
-        operations: List<AgentEditOperation>
-    ): List<FileDiff> {
-        val touchedPaths = collectTouchedPaths(writes, deletes, operations)
-        val before = touchedPaths.associateWith { path -> FileUtils.readFileContent(projectDir, path) }
-        val operationOutputs = operations.groupBy { FileUtils.normalizeRelativePath(it.path) }.mapValues { (path, ops) ->
-            val original = before[path] ?: ""
-            applyOperationsToContent(path, original, ops)
-        }
-
-        return touchedPaths.map { path ->
-            val updated = when {
-                path in deletes.map { FileUtils.normalizeRelativePath(it) } -> null
-                writes.any { FileUtils.normalizeRelativePath(it.path) == path } -> writes.last { FileUtils.normalizeRelativePath(it.path) == path }.content
-                operationOutputs.containsKey(path) -> operationOutputs[path]
-                else -> before[path]
-            }
-            FileDiff(
-                filePath = path,
-                originalContent = before[path].orEmpty(),
-                modifiedContent = updated.orEmpty(),
-                additions = updated?.lineSequence()?.count() ?: 0,
-                deletions = before[path]?.lineSequence()?.count() ?: 0,
-                isNewFile = before[path] == null && !updated.isNullOrEmpty(),
-                isDeleted = before[path] != null && updated == null
-            )
-        }.sortedBy { it.filePath }
-    }
-
     fun apply(
         projectId: String,
         projectDir: File,
@@ -61,13 +29,21 @@ class AgentChangeSetManager @Inject constructor(
         deletes: List<String>,
         operations: List<AgentEditOperation>
     ): AppliedChangeSet {
-        val touchedPaths = collectTouchedPaths(writes, deletes, operations)
+        val touchedPaths = (writes.map { it.path } + deletes + operations.map { it.path }).mapNotNull {
+            runCatching { FileUtils.normalizeRelativePath(it) }.getOrNull()
+        }.distinct()
+
         val before = touchedPaths.associateWith { path -> FileUtils.readFileContent(projectDir, path) }
 
         return try {
             operations.groupBy { FileUtils.normalizeRelativePath(it.path) }.forEach { (path, ops) ->
                 val original = before[path] ?: throw IllegalArgumentException("Cannot apply edit operations to missing file: $path")
-                FileUtils.writeFileContent(projectDir, path, applyOperationsToContent(path, original, ops))
+                val updated = when (File(path).extension.lowercase()) {
+                    "java" -> javaAstEditor.apply(original, ops)
+                    "xml" -> xmlDomEditor.apply(original, ops)
+                    else -> applyTextOperations(original, ops)
+                }
+                FileUtils.writeFileContent(projectDir, path, updated)
             }
 
             writes.forEach { write ->
@@ -153,26 +129,17 @@ class AgentChangeSetManager @Inject constructor(
         return diffs.sortedBy { it.filePath }
     }
 
-    private fun collectTouchedPaths(
-        writes: List<AgentFileWrite>,
-        deletes: List<String>,
-        operations: List<AgentEditOperation>
-    ): List<String> = (writes.map { it.path } + deletes + operations.map { it.path }).mapNotNull {
-        runCatching { FileUtils.normalizeRelativePath(it) }.getOrNull()
-    }.distinct()
-
-    private fun applyOperationsToContent(path: String, source: String, operations: List<AgentEditOperation>): String {
-        return when (File(path).extension.lowercase()) {
-            "java" -> javaAstEditor.apply(source, operations)
-            "xml" -> xmlDomEditor.apply(source, operations)
-            else -> applyTextOperations(source, operations)
-        }
-    }
-
     private fun applyTextOperations(source: String, operations: List<AgentEditOperation>): String {
         var current = source
         operations.forEach { op ->
-            if (op.kind == "text_replace") current = current.replace(op.target.toRegex(), op.payload)
+            when (op.kind) {
+                "text_replace" -> {
+                    if (op.target.isNotEmpty()) current = current.replace(op.target, op.payload)
+                }
+                "text_replace_regex" -> {
+                    if (op.target.isNotEmpty()) current = current.replace(Regex(op.target), op.payload)
+                }
+            }
         }
         return current
     }

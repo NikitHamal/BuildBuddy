@@ -10,6 +10,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.build.buddyai.feature.agent.AgentScreen
+import com.build.buddyai.feature.dependencies.DependenciesScreen
 import com.build.buddyai.feature.home.HomeScreen
 import com.build.buddyai.feature.models.ModelsScreen
 import com.build.buddyai.feature.onboarding.OnboardingScreen
@@ -25,9 +26,11 @@ object Routes {
     const val AGENT = "agent/{projectId}"
     const val SETTINGS = "settings"
     const val MODELS = "models"
+    const val DEPENDENCIES = "dependencies/{projectId}"
 
     fun playground(projectId: String) = "playground/$projectId"
     fun agent(projectId: String) = "agent/$projectId"
+    fun dependencies(projectId: String) = "dependencies/$projectId"
 }
 
 @Composable
@@ -88,7 +91,8 @@ fun BuildBuddyNavHost(
                 onBack = { navController.popBackStack() },
                 onNavigateToSettings = { navController.navigate(Routes.SETTINGS) },
                 onNavigateToModels = { navController.navigate(Routes.MODELS) },
-                onNavigateToAgent = { navController.navigate(Routes.agent(projectId)) }
+                onNavigateToAgent = { navController.navigate(Routes.agent(projectId)) },
+                onNavigateToDependencies = { navController.navigate(Routes.dependencies(projectId)) }
             )
         }
 
@@ -101,6 +105,17 @@ fun BuildBuddyNavHost(
                 projectId = projectId,
                 onBack = { navController.popBackStack() },
                 onNavigateToModels = { navController.navigate(Routes.MODELS) }
+            )
+        }
+
+        composable(
+            route = Routes.DEPENDENCIES,
+            arguments = listOf(navArgument("projectId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val projectId = backStackEntry.arguments?.getString("projectId") ?: return@composable
+            DependenciesScreen(
+                projectId = projectId,
+                onBack = { navController.popBackStack() }
             )
         }
 

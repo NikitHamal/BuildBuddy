@@ -14,8 +14,6 @@ import com.build.buddyai.core.agent.ProjectFailureMemoryStore
 import com.build.buddyai.core.agent.ParsedAgentResponse
 import com.build.buddyai.core.agent.ProjectIntegrityChecker
 import com.build.buddyai.core.agent.AgentToolMemoryStore
-import com.build.buddyai.core.agent.ProjectDiagnosticsEngine
-import com.build.buddyai.core.agent.TextDiffEngine
 import com.build.buddyai.core.common.ArtifactProvenance
 import com.build.buddyai.core.common.ArtifactProvenanceStore
 import com.build.buddyai.core.common.BuildArtifactInstaller
@@ -48,7 +46,6 @@ import com.build.buddyai.core.network.AiStreamingService
 import com.build.buddyai.core.network.ModelCapabilityRegistry
 import com.build.buddyai.core.network.StreamEvent
 import com.build.buddyai.core.problems.ProjectProblemsService
-import com.build.buddyai.core.dependency.ProjectDependencyManager
 import com.build.buddyai.domain.usecase.BuildProjectUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -87,22 +84,11 @@ data class AgentUiState(
     val pendingReview: PendingAgentReview? = null
 )
 
-data class ReviewDiffLine(
-    val prefix: String,
-    val text: String,
-    val oldLineNumber: Int? = null,
-    val newLineNumber: Int? = null
-)
-
 data class ReviewHunkPreview(
     val id: String,
     val filePath: String,
     val title: String,
     val preview: String,
-    val semanticSummary: String,
-    val dependencyImpactWarnings: List<String> = emptyList(),
-    val diffHeader: String = "",
-    val diffLines: List<ReviewDiffLine> = emptyList(),
     val accepted: Boolean = true
 )
 
@@ -114,7 +100,6 @@ data class PendingAgentReview(
     val deletes: List<String>,
     val operations: List<AgentEditOperation>,
     val shouldBuild: Boolean,
-    val buildAfterApply: Boolean,
     val visibleUserInput: String,
     val attachedFiles: List<String>,
     val repairAttempt: Int,
@@ -136,9 +121,6 @@ class AgentViewModel @Inject constructor(
     private val failureMemoryStore: ProjectFailureMemoryStore,
     private val toolMemoryStore: AgentToolMemoryStore,
     private val integrityChecker: ProjectIntegrityChecker,
-    private val diagnosticsEngine: ProjectDiagnosticsEngine,
-    private val diffEngine: TextDiffEngine,
-    private val dependencyManager: ProjectDependencyManager,
     private val buildProfileManager: BuildProfileManager,
     private val artifactInstaller: BuildArtifactInstaller,
     private val provenanceStore: ArtifactProvenanceStore,
@@ -335,7 +317,7 @@ class AgentViewModel @Inject constructor(
             val project = currentProject() ?: return finishWithError(sessionId, "Project not found")
             val projectDir = File(project.projectPath)
             val contextSnapshot = contextAssembler.assemble(
-                project = project,
+                projectId = project.id,
                 projectDir = projectDir,
                 attachedFiles = attachedFiles,
                 focusHint = visibleUserInput,
@@ -411,7 +393,7 @@ class AgentViewModel @Inject constructor(
         attachedFiles: List<String>
     ): AgentExecutionPlan? {
         val system = buildString {
-            appendLine("You are the BuildBuddy planning engine.")
+            appendLine("You are an Android app planning engine.")
             appendLine(AgentTaskProtocol.planningInstructions())
             appendLine()
             appendLine("Project context:")
@@ -555,8 +537,7 @@ class AgentViewModel @Inject constructor(
                         parsed = parsed,
                         visibleUserInput = visibleUserInput,
                         attachedFiles = attachedFiles,
-                        repairAttempt = repairAttempt,
-                        projectDir = projectDir
+                        repairAttempt = repairAttempt
                     )
                 )
             }
@@ -618,8 +599,7 @@ class AgentViewModel @Inject constructor(
         parsed: ParsedAgentResponse,
         visibleUserInput: String,
         attachedFiles: List<String>,
-        repairAttempt: Int,
-        projectDir: File
+        repairAttempt: Int
     ): PendingAgentReview {
         val review = AgentReviewPolicy.decide(
             mode = _uiState.value.autonomyMode,
@@ -627,45 +607,38 @@ class AgentViewModel @Inject constructor(
             deletes = parsed.deletes,
             operations = parsed.operations
         )
-        val previews = runCatching {
-            changeSetManager.preview(projectDir, parsed.writes, parsed.deletes, parsed.operations)
-        }.getOrDefault(emptyList())
-        val hunks = previews.flatMap { diff ->
-            val dependencyWarnings = dependencyManager.analyzeImpact(diff.filePath, diff.originalContent, diff.modifiedContent)
-            val diffHunks = diffEngine.createHunks(diff.originalContent, diff.modifiedContent).ifEmpty {
-                listOf(TextDiffEngine.DiffHunk(id = "full-${diff.filePath}", header = "Full file preview", lines = emptyList()))
+        val hunks = buildList {
+            parsed.writes.forEach { write ->
+                add(
+                    ReviewHunkPreview(
+                        id = "write:${write.path}",
+                        filePath = write.path,
+                        title = "Write ${write.path}",
+                        preview = write.content.lineSequence().take(14).joinToString("\n")
+                    )
+                )
             }
-            diffHunks.mapIndexed { index, hunk ->
-                ReviewHunkPreview(
-                    id = "${diff.filePath}:$index",
-                    filePath = diff.filePath,
-                    title = when {
-                        diff.isDeleted -> "Delete ${diff.filePath}"
-                        diff.isNewFile -> "Create ${diff.filePath}"
-                        else -> "Patch ${diff.filePath}"
-                    },
-                    preview = hunk.lines.joinToString("\n") { "${it.type.name.first()} ${it.text}" }
-                        .take(900)
-                        .ifBlank { diff.modifiedContent.lineSequence().take(18).joinToString("\n") },
-                    semanticSummary = when {
-                        diff.isDeleted -> "Remove file from project graph"
-                        diff.isNewFile -> "Introduce new file into project graph"
-                        else -> "Surgical update to existing project node"
-                    },
-                    dependencyImpactWarnings = dependencyWarnings,
-                    diffHeader = hunk.header,
-                    diffLines = hunk.lines.take(18).map { line ->
-                        ReviewDiffLine(
-                            prefix = when (line.type) {
-                                TextDiffEngine.DiffLine.Type.ADDED -> "+"
-                                TextDiffEngine.DiffLine.Type.REMOVED -> "-"
-                                TextDiffEngine.DiffLine.Type.CONTEXT -> " "
-                            },
-                            text = line.text,
-                            oldLineNumber = line.oldLineNumber,
-                            newLineNumber = line.newLineNumber
-                        )
-                    }
+            parsed.deletes.forEach { deletePath ->
+                add(
+                    ReviewHunkPreview(
+                        id = "delete:$deletePath",
+                        filePath = deletePath,
+                        title = "Delete $deletePath",
+                        preview = "This file or directory will be removed from the project."
+                    )
+                )
+            }
+            parsed.operations.forEachIndexed { index, operation ->
+                add(
+                    ReviewHunkPreview(
+                        id = "op:${operation.path}:$index",
+                        filePath = operation.path,
+                        title = "${operation.kind} on ${operation.path}",
+                        preview = listOf(operation.target, operation.payload)
+                            .filter { it.isNotBlank() }
+                            .joinToString("\n→ ")
+                            .take(600)
+                    )
                 )
             }
         }
@@ -677,7 +650,6 @@ class AgentViewModel @Inject constructor(
             deletes = parsed.deletes,
             operations = parsed.operations,
             shouldBuild = parsed.shouldBuild,
-            buildAfterApply = parsed.shouldBuild,
             visibleUserInput = visibleUserInput,
             attachedFiles = attachedFiles,
             repairAttempt = repairAttempt,
@@ -686,17 +658,19 @@ class AgentViewModel @Inject constructor(
     }
 
     private fun filteredReviewPayload(pending: PendingAgentReview): ParsedAgentResponse {
-        val acceptedPaths = pending.hunks.filter { it.accepted }.map { it.filePath }.toSet()
-        val acceptedWrites = pending.writes.filter { it.path in acceptedPaths }
-        val acceptedDeletes = pending.deletes.filter { it in acceptedPaths }
-        val acceptedOperations = pending.operations.filter { it.path in acceptedPaths }
-        val summarySuffix = if (acceptedPaths.size == pending.hunks.map { it.filePath }.distinct().size) "" else "\n\nReview applied a subset of the staged hunks."
+        val acceptedIds = pending.hunks.filter { it.accepted }.map { it.id }.toSet()
+        val acceptedWrites = pending.writes.filter { "write:${it.path}" in acceptedIds }
+        val acceptedDeletes = pending.deletes.filter { "delete:$it" in acceptedIds }
+        val acceptedOperations = pending.operations.filterIndexed { index, operation ->
+            "op:${operation.path}:$index" in acceptedIds
+        }
+        val summarySuffix = if (acceptedIds.size == pending.hunks.size) "" else "\n\nReview applied a subset of the staged hunks."
         return ParsedAgentResponse(
             envelope = pending.shouldBuild.let { shouldBuild ->
                 com.build.buddyai.core.agent.AgentTaskEnvelope(
                     mode = com.build.buddyai.core.agent.AgentTaskEnvelope.MODE_TASK,
                     summary = pending.summary,
-                    shouldBuild = pending.buildAfterApply
+                    shouldBuild = shouldBuild
                 )
             },
             plan = null,
@@ -706,13 +680,6 @@ class AgentViewModel @Inject constructor(
             displayMessage = pending.summary + summarySuffix,
             rawContent = pending.summary
         )
-    }
-
-    fun toggleReviewBuildAfterApply() {
-        _uiState.update { state ->
-            val pending = state.pendingReview ?: return@update state
-            state.copy(pendingReview = pending.copy(buildAfterApply = !pending.buildAfterApply))
-        }
     }
 
     private suspend fun applyTurnChanges(
@@ -743,8 +710,8 @@ class AgentViewModel @Inject constructor(
         toolMemoryStore.record(project.id, "executor", parsed.displayMessage, diffs.map { it.filePath })
 
         val integrity = integrityChecker.validate(project, projectDir)
-        val buildProfile = buildProfileManager.loadProfile(project.id)
-        val integrityProblems = diagnosticsEngine.scan(project, projectDir, buildProfile, agentValidationContext = parsed.displayMessage)
+        val integrityProblems = integrity.errors.map { BuildProblem(ProblemSeverity.ERROR, "Integrity error", it) } +
+            integrity.warnings.map { BuildProblem(ProblemSeverity.WARNING, "Integrity warning", it) }
         problemsService.replace(project.id, integrityProblems)
         _uiState.update {
             it.copy(
@@ -753,14 +720,8 @@ class AgentViewModel @Inject constructor(
             )
         }
 
-        if (!integrity.isValid || integrityProblems.any { it.severity == ProblemSeverity.ERROR }) {
-            val signature = failureMemoryStore.recordFailure(
-                project.id,
-                integrity.summary() + "\n" + integrityProblems.joinToString(" | ") { it.detail },
-                diffs.map { it.filePath },
-                visibleUserInput,
-                ProjectFailureMemoryStore.MemoryContext(project.template.name, "on-device-aapt2-ecj-d8", project.language.name, visibleUserInput.take(80))
-            )
+        if (!integrity.isValid) {
+            val signature = failureMemoryStore.recordFailure(project.id, integrity.summary(), diffs.map { it.filePath }, visibleUserInput)
             setActions(
                 action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
                 action(AgentActionType.VERIFYING, "Integrity validation failed", ActionStatus.FAILED)
@@ -783,6 +744,7 @@ class AgentViewModel @Inject constructor(
             return
         }
 
+        val buildProfile = buildProfileManager.loadProfile(project.id)
         val buildOutcome = runValidationBuild(project, buildProfile)
         val combinedProblems = integrityProblems + buildOutcome.problems
         problemsService.replace(project.id, combinedProblems)
@@ -795,7 +757,7 @@ class AgentViewModel @Inject constructor(
         }
 
         if (buildOutcome.status == BuildStatus.SUCCESS) {
-            buildOutcome.failureSignature?.let { failureMemoryStore.markResolved(project.id, it, parsed.displayMessage, parsed.displayMessage) }
+            buildOutcome.failureSignature?.let { failureMemoryStore.markResolved(project.id, it, parsed.displayMessage) }
             toolMemoryStore.record(project.id, "build", buildOutcome.summary)
             setActions(
                 action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
@@ -804,13 +766,7 @@ class AgentViewModel @Inject constructor(
             return
         }
 
-        val failureSignature = failureMemoryStore.recordFailure(
-            project.id,
-            buildOutcome.failureContext ?: buildOutcome.summary,
-            diffs.map { it.filePath },
-            visibleUserInput,
-            ProjectFailureMemoryStore.MemoryContext(project.template.name, "on-device-aapt2-ecj-d8", project.language.name, visibleUserInput.take(80))
-        )
+        val failureSignature = failureMemoryStore.recordFailure(project.id, buildOutcome.failureContext ?: buildOutcome.summary, diffs.map { it.filePath }, visibleUserInput)
         setActions(
             action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
             action(AgentActionType.BUILDING, buildOutcome.summary, ActionStatus.FAILED),
@@ -1098,13 +1054,15 @@ class AgentViewModel @Inject constructor(
     }
 
     private fun buildExecutionSystemPrompt(projectContext: String, plan: AgentExecutionPlan?): String = buildString {
-        appendLine("You are BuildBuddy, a production Android builder operating inside a sandboxed project.")
+        appendLine("You are a senior Android product engineer working inside an existing project.")
         appendLine("Use the local symbol index, failure memory, and tool-result memory to avoid brute forcing whole-file context.")
         appendLine("Default behavior: investigate, execute the task directly, apply surgical edits when possible, and validate changes when appropriate.")
         appendLine("Do not ask the user to pick plan/apply/auto modes.")
         appendLine("When the user only wants an explanation or advice, reply normally and do not change files.")
         appendLine("When the user asks for implementation, fixes, refactors, audits, or feature work, emit actionable file edits or structured edit operations.")
         appendLine("Never use placeholders, pseudo-diffs, or partial snippets for files.")
+        appendLine("Do not leak internal tooling language into the user app. Never add words like BuildBuddy, starter template, on-device, sandbox, validator, or production-safe to app UI copy, comments, or source unless the user explicitly asked for them.")
+        appendLine("If the request is to build or redesign an app, replace scaffold/demo copy with product-specific UX, stronger visual hierarchy, and realistic screen structure instead of leaving a generic starter screen.")
         appendLine()
         if (plan != null) {
             appendLine("Planner goal: ${plan.goal}")
@@ -1119,7 +1077,17 @@ class AgentViewModel @Inject constructor(
     }
 
     private fun buildTurnPrompt(visibleUserInput: String, repairContext: String?): String = if (repairContext == null) {
-        visibleUserInput
+        buildString {
+            appendLine(visibleUserInput)
+            if (isProductBuildPrompt(visibleUserInput)) {
+                appendLine()
+                appendLine("Implementation quality bar:")
+                appendLine("- Replace starter/demo copy with product-specific text and flow.")
+                appendLine("- Build a polished first screen with strong spacing, hierarchy, and realistic actions/states.")
+                appendLine("- Do not leave framework/internal wording in the generated app UI.")
+                appendLine("- Tailor the layout and copy to the requested product instead of reusing the same generic screen.")
+            }
+        }.trim()
     } else {
         buildString {
             appendLine("Original user request:")
@@ -1132,6 +1100,11 @@ class AgentViewModel @Inject constructor(
             appendLine(repairContext)
             appendLine("```")
         }
+    }
+
+    private fun isProductBuildPrompt(input: String): Boolean {
+        val normalized = input.lowercase()
+        return listOf("build", "create", "make", "generate", "app", "screen", "ui", "ux").count { it in normalized } >= 2
     }
 
     private fun action(

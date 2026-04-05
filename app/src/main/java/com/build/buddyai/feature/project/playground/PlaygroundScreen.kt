@@ -14,14 +14,12 @@ import com.build.buddyai.R
 import com.build.buddyai.core.designsystem.component.*
 import com.build.buddyai.core.designsystem.theme.*
 import com.build.buddyai.feature.build.BuildWorkspaceScreen
-import com.build.buddyai.feature.dependencies.DependenciesScreen
 import com.build.buddyai.feature.editor.WorkspaceScreen
 import com.build.buddyai.feature.project.overview.OverviewTab
 
 enum class PlaygroundTab(val titleRes: Int, val icon: @Composable () -> Unit) {
     OVERVIEW(R.string.playground_overview, { Icon(Icons.Filled.Dashboard, contentDescription = null) }),
     WORKSPACE(R.string.playground_workspace, { Icon(Icons.Filled.Code, contentDescription = null) }),
-    DEPENDENCIES(R.string.playground_dependencies, { Icon(Icons.Filled.Link, contentDescription = null) }),
     BUILD(R.string.playground_build, { Icon(Icons.Filled.Build, contentDescription = null) })
 }
 
@@ -31,7 +29,8 @@ fun PlaygroundScreen(
     onBack: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToModels: () -> Unit,
-    onNavigateToAgent: () -> Unit
+    onNavigateToAgent: () -> Unit,
+    onNavigateToDependencies: () -> Unit
 ) {
     val viewModel: PlaygroundViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -51,8 +50,8 @@ fun PlaygroundScreen(
                     IconButton(onClick = onNavigateToAgent) {
                         Icon(Icons.Filled.Psychology, contentDescription = "AI Agent")
                     }
-                    IconButton(onClick = onNavigateToModels) {
-                        Icon(Icons.Filled.Key, contentDescription = "AI Providers")
+                    IconButton(onClick = onNavigateToDependencies) {
+                        Icon(Icons.Filled.Link, contentDescription = "Dependencies")
                     }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
@@ -95,7 +94,6 @@ fun PlaygroundScreen(
                         onNavigateToAgent = onNavigateToAgent
                     )
                     PlaygroundTab.WORKSPACE -> WorkspaceScreen(projectId = projectId)
-                    PlaygroundTab.DEPENDENCIES -> DependenciesScreen(projectId = projectId)
                     PlaygroundTab.BUILD -> BuildWorkspaceScreen(
                         projectId = projectId,
                         onNavigateToAgent = onNavigateToAgent

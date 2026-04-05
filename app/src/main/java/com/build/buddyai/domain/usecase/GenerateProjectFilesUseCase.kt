@@ -92,7 +92,7 @@ class GenerateProjectFilesUseCase @Inject constructor(
                     ) {
                         Text(text = "${escape(project.name)}", style = MaterialTheme.typography.headlineMedium)
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text(text = "Built with BuildBuddy", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(text = "Everything is ready for your product direction.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -134,7 +134,7 @@ class GenerateProjectFilesUseCase @Inject constructor(
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:fillViewport="true"
-                android:background="@android:color/background_light">
+                android:background="#F4F1EC">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -142,36 +142,64 @@ class GenerateProjectFilesUseCase @Inject constructor(
                     android:orientation="vertical"
                     android:padding="24dp">
 
-                    <TextView
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/app_name"
-                        android:textStyle="bold"
-                        android:textSize="26sp"
-                        android:textColor="@android:color/black" />
+                        android:orientation="vertical"
+                        android:background="@drawable/bg_surface_card"
+                        android:padding="20dp">
 
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:text="A production-safe starter template that builds cleanly on-device."
-                        android:textColor="@android:color/darker_gray"
-                        android:textSize="14sp" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/app_name"
+                            android:textStyle="bold"
+                            android:textSize="28sp"
+                            android:textColor="#17130F" />
 
-                    <Button
-                        android:id="@+id/primaryActionButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="24dp"
-                        android:text="Primary action" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:text="A polished starting point for your app experience."
+                            android:textColor="#6C665F"
+                            android:textSize="15sp" />
 
-                    <TextView
-                        android:id="@+id/statusText"
+                        <Button
+                            android:id="@+id/primaryActionButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="20dp"
+                            android:background="@drawable/bg_primary_button"
+                            android:text="Get started"
+                            android:textAllCaps="false"
+                            android:textColor="@android:color/white" />
+                    </LinearLayout>
+
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="16dp"
-                        android:text="Ready"
-                        android:textSize="16sp" />
+                        android:orientation="vertical"
+                        android:background="@drawable/bg_surface_card"
+                        android:padding="16dp">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Status"
+                            android:textStyle="bold"
+                            android:textColor="#17130F" />
+
+                        <TextView
+                            android:id="@+id/statusText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:text="Ready to customize"
+                            android:textColor="#6C665F"
+                            android:textSize="16sp" />
+                    </LinearLayout>
                 </LinearLayout>
             </ScrollView>
             """.trimIndent()
@@ -379,7 +407,7 @@ class GenerateProjectFilesUseCase @Inject constructor(
                 Button action = findViewById(R.id.primaryActionButton);
                 TextView status = findViewById(R.id.statusText);
                 action.setOnClickListener(view -> {
-                    status.setText("Action completed");
+                    status.setText("Your first interaction is wired up.");
                     Toast.makeText(this, "${escape(project.name)} is ready", Toast.LENGTH_SHORT).show();
                 });
             }
@@ -403,7 +431,7 @@ class GenerateProjectFilesUseCase @Inject constructor(
                 val action = findViewById<Button>(R.id.primaryActionButton)
                 val status = findViewById<TextView>(R.id.statusText)
                 action.setOnClickListener {
-                    status.text = "Action completed"
+                    status.text = "Your first interaction is wired up."
                     Toast.makeText(this, "${escape(project.name)} is ready", Toast.LENGTH_SHORT).show()
                 }
             }
@@ -643,9 +671,29 @@ class GenerateProjectFilesUseCase @Inject constructor(
             <?xml version="1.0" encoding="utf-8"?>
             <resources>
                 <style name="Theme.App" parent="android:Theme.Material.Light.NoActionBar">
-                    <item name="android:windowBackground">@android:color/background_light</item>
+                    <item name="android:windowBackground">#F4F1EC</item>
                 </style>
             </resources>
+            """.trimIndent()
+        )
+        val drawableDir = File(dir, "app/src/main/res/drawable").apply { mkdirs() }
+        File(drawableDir, "bg_surface_card.xml").writeText(
+            """
+            <?xml version="1.0" encoding="utf-8"?>
+            <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+                <solid android:color="#FFFDFC" />
+                <corners android:radius="22dp" />
+                <stroke android:width="1dp" android:color="#E3D8CB" />
+            </shape>
+            """.trimIndent()
+        )
+        File(drawableDir, "bg_primary_button.xml").writeText(
+            """
+            <?xml version="1.0" encoding="utf-8"?>
+            <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+                <solid android:color="#17130F" />
+                <corners android:radius="16dp" />
+            </shape>
             """.trimIndent()
         )
     }

@@ -43,8 +43,8 @@ enum class ProjectTemplate(
     BLANK_COMPOSE("Blank Compose App", "Empty Jetpack Compose project with Material 3", ProjectLanguage.KOTLIN, UiFramework.COMPOSE),
     SINGLE_ACTIVITY_COMPOSE("Single Activity Compose", "Compose project with navigation and scaffold", ProjectLanguage.KOTLIN, UiFramework.COMPOSE),
 
-    BLANK_JAVA_VIEWS("Blank Java App", "Production-safe Java/XML starter for on-device builds", ProjectLanguage.JAVA, UiFramework.VIEWS),
-    BLANK_KOTLIN_VIEWS("Blank Kotlin App", "Lean Kotlin/XML starter selected by default for Kotlin", ProjectLanguage.KOTLIN, UiFramework.VIEWS),
+    BLANK_JAVA_VIEWS("Blank Java App", "Neutral Java/XML app scaffold with a polished baseline screen", ProjectLanguage.JAVA, UiFramework.VIEWS),
+    BLANK_KOTLIN_VIEWS("Blank Kotlin App", "Neutral Kotlin/XML app scaffold selected by default for Kotlin", ProjectLanguage.KOTLIN, UiFramework.VIEWS),
     JAVA_DASHBOARD("Java Dashboard App", "Analytics-style dashboard with cards and actions", ProjectLanguage.JAVA, UiFramework.VIEWS),
     JAVA_FORM("Java Form App", "Structured form workflow with validation-ready layout", ProjectLanguage.JAVA, UiFramework.VIEWS),
     JAVA_MASTER_DETAIL("Java Master Detail", "Two-pane-ready list/detail starter using framework views", ProjectLanguage.JAVA, UiFramework.VIEWS),

@@ -123,7 +123,6 @@ Return exactly one planning block:
 Rules:
 - Think like a planner/executor for a real Android product.
 - Keep the plan short, concrete, and file-aware.
-- Aim for Aesthetic Excellence: When building UI, plan for modern, high-fidelity designs (vibrant colors, smooth spacing, proper typography) even in XML.
 - Prefer surgical edits over full-file rewrites when possible.
 """.trimIndent()
 
@@ -135,7 +134,7 @@ Always begin your response with a buildbuddy JSON block:
 
 If you can make a precise structured edit, prefer a buildbuddy-edit block before any full-file blocks:
 ```buildbuddy-edit
-[{"kind":"java_add_import|java_remove_import|java_replace_method|java_upsert_method|java_replace_call|xml_set_attribute|xml_remove_attribute|xml_replace_text|xml_append_under|xml_remove_nodes|text_replace","path":"relative/path","target":"selector","payload":"content","attributes":{"name":"value"}}]
+[{"kind":"java_add_import|java_remove_import|java_replace_method|java_upsert_method|java_replace_call|xml_set_attribute|xml_remove_attribute|xml_replace_text|xml_append_under|xml_remove_nodes|text_replace|text_replace_regex","path":"relative/path","target":"selector","payload":"content","attributes":{"name":"value"}}]
 ```
 
 If files must be created or fully replaced, emit one full-file block per file:
@@ -147,11 +146,10 @@ Rules:
 - Use mode="reply" for pure questions or advice with no project edits.
 - Use mode="task" for implementation, fixes, refactors, audits that change files, or validation work.
 - Prefer AST/XML edit operations for Java and XML when a surgical patch is enough.
+- text_replace uses a literal string match. Use text_replace_regex only when you intentionally need regex semantics.
 - Never output partial patches, ellipses, or placeholders.
 - Never write outside the project root.
 - Put every file change in filepath blocks and every deletion in deleteFiles.
 - Set shouldBuild=true when the changed project should be validated immediately.
-- Aesthetic Excellence: Wow the user with your designs. Avoid generic grey/white layouts. Use modern Android design patterns (rounded corners, subtle gradients, high-quality typography).
-- No Placeholders/Template Text: Never include generic phrases like "A production-safe starter template" in the final UI. Replace all boilerplate text with relevant, creative content for the specific app.
 """.trimIndent()
 }

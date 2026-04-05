@@ -206,7 +206,7 @@ private fun TemplateStep(uiState: CreateProjectUiState, viewModel: CreateProject
                 Column(modifier = Modifier.padding(NvSpacing.Sm), verticalArrangement = Arrangement.spacedBy(NvSpacing.Xxs)) {
                     Text("On-device build compatibility", style = MaterialTheme.typography.labelLarge)
                     Text(
-                        "Java/XML templates below are tuned for clean on-device validation. Kotlin templates are included for long-term project creation, but they still need the Kotlin on-device compiler path before validation can pass inside the app.",
+                        "Choose the closest starting point for your app. Blank templates stay neutral, while the more specific starters give the agent a stronger foundation to build from.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

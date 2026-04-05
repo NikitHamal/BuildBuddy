@@ -46,6 +46,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -198,21 +199,19 @@ internal fun AgentStatusHeader(
     providerName: String?
 ) {
     Surface(modifier = Modifier.fillMaxWidth()) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = NvSpacing.Sm, vertical = NvSpacing.Xs),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(NvSpacing.Xs), verticalAlignment = Alignment.CenterVertically) {
-                StatusPill(icon = Icons.Filled.AutoAwesome, label = "Autonomous")
-                StatusPill(icon = Icons.Filled.Build, label = "Default validate")
-            }
+            StatusPill(icon = Icons.Filled.AutoAwesome, label = "Safe apply")
             Text(
-                text = listOfNotNull(providerName, modelName).joinToString(" · ").ifBlank { "No model" },
+                text = listOfNotNull(providerName, modelName).joinToString(" · ").ifBlank { "No model selected" },
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -266,7 +265,7 @@ internal fun ChatMessageItem(message: ChatMessage) {
                 }
                 if (!isUser) {
                     Text(
-                        text = if (isSystem) "System" else "BuildBuddy",
+                        text = if (isSystem) "System" else "Assistant",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
