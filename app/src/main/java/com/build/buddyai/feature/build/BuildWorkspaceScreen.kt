@@ -253,7 +253,7 @@ fun BuildWorkspaceScreen(
                         OutlinedButton(onClick = { keystorePicker.launch(arrayOf("*/*")) }) {
                             Icon(Icons.Filled.FileUpload, contentDescription = null)
                             Spacer(Modifier.size(8.dp))
-                            Text("Import keystore")
+                            Text(if (uiState.buildProfile.signing == null) "Import keystore" else "Rotate keystore")
                         }
                         if (uiState.buildProfile.signing != null) {
                             TextButton(onClick = viewModel::clearSigning) {
@@ -261,6 +261,19 @@ fun BuildWorkspaceScreen(
                                 Spacer(Modifier.size(8.dp))
                                 Text("Clear")
                             }
+                        }
+                    }
+                    if (uiState.signingAudit.isNotEmpty()) {
+                        HorizontalDivider()
+                        Text("Signing audit", style = MaterialTheme.typography.titleSmall)
+                        uiState.signingAudit.take(6).forEach { entry ->
+                            Text(
+                                "${entry.eventType}: ${entry.detail}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }

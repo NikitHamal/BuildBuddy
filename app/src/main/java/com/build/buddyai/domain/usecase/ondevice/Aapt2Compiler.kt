@@ -1,22 +1,13 @@
 package com.build.buddyai.domain.usecase.ondevice
 
 import java.io.File
-import java.io.PrintWriter
-import java.io.StringWriter
 
-/**
- * Stage 1: Compile resources using the bundled AAPT2 native binary.
- *
- * Produces:
- *  - `bin/res/project.zip`   (compiled flat resources)
- *  - `bin/resources.ap_`     (linked resource APK shell)
- *  - `gen/R.java`            (generated R class)
- */
 class Aapt2Compiler(
     private val aapt2: File,
     private val projectDir: File,
     private val packageName: String,
     private val androidJar: File,
+    private val manifestFileOverride: File? = null,
     private val minSdkVersion: Int = 21,
     private val targetSdkVersion: Int = 35,
     private val versionCode: String = "1",
@@ -24,7 +15,7 @@ class Aapt2Compiler(
     private val log: (String) -> Unit = {}
 ) {
     private val resDir = File(projectDir, "app/src/main/res")
-    private val manifestFile = File(projectDir, "app/src/main/AndroidManifest.xml")
+    private val manifestFile = manifestFileOverride ?: File(projectDir, "app/src/main/AndroidManifest.xml")
     private val binDir = File(projectDir, ".build/bin").also { it.mkdirs() }
     private val genDir = File(projectDir, ".build/gen").also { it.mkdirs() }
     private val compiledResDir = File(binDir, "res").also { it.mkdirs() }
@@ -33,43 +24,23 @@ class Aapt2Compiler(
     val rJavaDir: String get() = genDir.absolutePath
 
     fun compile() {
-        // Validate required files
-        if (!manifestFile.exists()) {
-            throw RuntimeException("AndroidManifest.xml not found at: ${manifestFile.absolutePath}")
-        }
+        if (!manifestFile.exists()) throw RuntimeException("AndroidManifest.xml not found at: ${manifestFile.absolutePath}")
+        if (!androidJar.exists()) throw RuntimeException("android.jar not found at: ${androidJar.absolutePath}")
 
-        if (!androidJar.exists()) {
-            throw RuntimeException("android.jar not found at: ${androidJar.absolutePath}")
-        }
-
-        // Compile resources only if res directory exists
         if (resDir.exists()) {
             log("[AAPT2] Found resources in: ${resDir.absolutePath}")
             compileResources()
         } else {
             log("[AAPT2] WARNING: No res directory found at: ${resDir.absolutePath}")
         }
-        
         linkResources()
     }
 
-    // ────────────────────────────────────────────────────────
-    // Step 1a: aapt2 compile --dir res/ -o bin/res/project.zip
-    // ────────────────────────────────────────────────────────
     private fun compileResources() {
         val compiledZip = File(compiledResDir, "project.zip")
-        val args = listOf(
-            aapt2.absolutePath,
-            "compile",
-            "--dir", resDir.absolutePath,
-            "-o", compiledZip.absolutePath
-        )
-        execute(args, "AAPT2 compile")
+        execute(listOf(aapt2.absolutePath, "compile", "--dir", resDir.absolutePath, "-o", compiledZip.absolutePath), "AAPT2 compile")
     }
 
-    // ────────────────────────────────────────────────────────
-    // Step 1b: aapt2 link ... -o resources.ap_
-    // ────────────────────────────────────────────────────────
     private fun linkResources() {
         val args = mutableListOf(
             aapt2.absolutePath,
@@ -86,60 +57,17 @@ class Aapt2Compiler(
             "--java", genDir.absolutePath,
             "-o", resourcesApkPath
         )
-
-        // Add compiled resource ZIPs if they exist
-        compiledResDir.listFiles()?.filter { it.isFile && it.extension == "zip" }?.forEach {
-            args += listOf("-R", it.absolutePath)
-        }
-
+        compiledResDir.listFiles()?.filter { it.isFile && it.extension == "zip" }?.forEach { args += listOf("-R", it.absolutePath) }
         execute(args, "AAPT2 link")
-        
-        // Verify output was created
-        val outputApk = File(resourcesApkPath)
-        if (outputApk.exists()) {
-            log("[AAPT2] resources.ap_ created successfully (${outputApk.length()} bytes)")
-            // List contents
-            try {
-                java.util.zip.ZipFile(outputApk).use { zip ->
-                    val entries = zip.entries().asSequence().toList()
-                    log("[AAPT2] resources.ap_ contains ${entries.size} entries: ${entries.map { it.name }.joinToString(", ")}")
-                }
-            } catch (e: Exception) {
-                log("[AAPT2] WARNING: Could not read resources.ap_ contents: ${e.message}")
-            }
-        } else {
-            log("[AAPT2] ERROR: resources.ap_ was NOT CREATED by AAPT2 link!")
-        }
+        File(resourcesApkPath).takeIf { it.exists() }?.let { outputApk -> log("[AAPT2] resources.ap_ created successfully (${outputApk.length()} bytes)") }
     }
 
     private fun execute(args: List<String>, tag: String) {
         log("[$tag] ${args.joinToString(" ")}")
-        val process = ProcessBuilder(args)
-            .redirectErrorStream(true)
-            .start()
+        val process = ProcessBuilder(args).redirectErrorStream(true).start()
         val output = process.inputStream.bufferedReader().readText()
         val exitCode = process.waitFor()
         if (output.isNotBlank()) log("[$tag] $output")
-        if (exitCode != 0) {
-            throw RuntimeException("$tag failed (exit $exitCode):\n$output")
-        }
-        
-        // Log output file details if this was a link/compile that produces files
-        if (tag == "AAPT2 link") {
-            val outputApk = File(resourcesApkPath)
-            if (outputApk.exists()) {
-                log("[AAPT2] Output created: ${outputApk.absolutePath} (${outputApk.length()} bytes)")
-                try {
-                    java.util.zip.ZipFile(outputApk).use { zip ->
-                        val entries = zip.entries().asSequence().toList()
-                        log("[AAPT2] Contents: ${entries.map { it.name }.joinToString(", ")}")
-                    }
-                } catch (e: Exception) {
-                    log("[AAPT2] WARNING: Could not read output: ${e.message}")
-                }
-            } else {
-                log("[AAPT2] ERROR: Expected output file NOT CREATED: ${outputApk.absolutePath}")
-            }
-        }
+        if (exitCode != 0) throw RuntimeException("$tag failed (exit $exitCode):\n$output")
     }
 }

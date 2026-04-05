@@ -152,19 +152,24 @@ fun AgentScreen(
                             }
                         }
                     }
-
                     uiState.pendingReview?.let { pending ->
                         item {
                             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text("Review staged changes", style = MaterialTheme.typography.titleSmall)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("PR-style review", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                        AssistChip(
+                                            onClick = viewModel::toggleReviewBuildAfterApply,
+                                            label = { Text(if (pending.buildAfterApply) "Apply + rebuild" else "Apply only") }
+                                        )
+                                    }
                                     Text(pending.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     if (pending.reasons.isNotEmpty()) {
                                         pending.reasons.forEach { reason ->
                                             Text("• $reason", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
-                                    pending.hunks.take(12).forEach { hunk ->
+                                    pending.hunks.take(16).forEach { hunk ->
                                         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                                             Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -176,13 +181,24 @@ fun AgentScreen(
                                                     )
                                                 }
                                                 Text(hunk.filePath, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                                                Text(
-                                                    hunk.preview.ifBlank { "No preview available." },
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    maxLines = 8,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
+                                                Text(hunk.semanticSummary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                if (hunk.dependencyImpactWarnings.isNotEmpty()) {
+                                                    hunk.dependencyImpactWarnings.forEach { warning ->
+                                                        Text("Dependency impact: $warning", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
+                                                    }
+                                                }
+                                                if (hunk.diffHeader.isNotBlank()) {
+                                                    Text(hunk.diffHeader, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                                hunk.diffLines.take(10).forEach { line ->
+                                                    Text(
+                                                        "${line.prefix} ${line.text}",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -195,7 +211,7 @@ fun AgentScreen(
                                         OutlinedButton(onClick = viewModel::approvePendingReview, modifier = Modifier.weight(1f)) {
                                             Icon(Icons.Filled.Check, contentDescription = null)
                                             Spacer(Modifier.size(8.dp))
-                                            Text("Apply")
+                                            Text(if (pending.buildAfterApply) "Apply selected + rebuild" else "Apply selected")
                                         }
                                     }
                                 }

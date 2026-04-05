@@ -123,6 +123,7 @@ Return exactly one planning block:
 Rules:
 - Think like a planner/executor for a real Android product.
 - Keep the plan short, concrete, and file-aware.
+- Aim for Aesthetic Excellence: When building UI, plan for modern, high-fidelity designs (vibrant colors, smooth spacing, proper typography) even in XML.
 - Prefer surgical edits over full-file rewrites when possible.
 """.trimIndent()
 
@@ -150,5 +151,7 @@ Rules:
 - Never write outside the project root.
 - Put every file change in filepath blocks and every deletion in deleteFiles.
 - Set shouldBuild=true when the changed project should be validated immediately.
+- Aesthetic Excellence: Wow the user with your designs. Avoid generic grey/white layouts. Use modern Android design patterns (rounded corners, subtle gradients, high-quality typography).
+- No Placeholders/Template Text: Never include generic phrases like "A production-safe starter template" in the final UI. Replace all boilerplate text with relevant, creative content for the specific app.
 """.trimIndent()
 }

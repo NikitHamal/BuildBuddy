@@ -6,12 +6,15 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.build.buddyai.core.agent.AgentChangeSetManager
+import com.build.buddyai.core.agent.ProjectDiagnosticsEngine
 import com.build.buddyai.core.common.ArtifactProvenance
 import com.build.buddyai.core.common.ArtifactProvenanceStore
 import com.build.buddyai.core.common.BuildArtifactInstaller
 import com.build.buddyai.core.common.BuildCancellationRegistry
 import com.build.buddyai.core.common.BuildForegroundService
 import com.build.buddyai.core.common.BuildProfileManager
+import com.build.buddyai.core.common.SigningAuditEntry
+import com.build.buddyai.core.common.SigningAuditStore
 import com.build.buddyai.core.common.SnapshotManager
 import com.build.buddyai.core.data.repository.ArtifactRepository
 import com.build.buddyai.core.data.repository.BuildRepository
@@ -59,7 +62,8 @@ data class BuildUiState(
     val timeline: List<BuildTimelineEntry> = emptyList(),
     val latestArtifact: BuildArtifact? = null,
     val artifactProvenance: ArtifactProvenance? = null,
-    val restorePoints: List<RestorePoint> = emptyList()
+    val restorePoints: List<RestorePoint> = emptyList(),
+    val signingAudit: List<SigningAuditEntry> = emptyList()
 )
 
 @HiltViewModel
@@ -75,6 +79,8 @@ class BuildViewModel @Inject constructor(
     private val problemsService: ProjectProblemsService,
     private val provenanceStore: ArtifactProvenanceStore,
     private val changeSetManager: AgentChangeSetManager,
+    private val diagnosticsEngine: ProjectDiagnosticsEngine,
+    private val signingAuditStore: SigningAuditStore,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -92,6 +98,7 @@ class BuildViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 buildProfile = buildProfileManager.loadProfile(projectId),
+                signingAudit = signingAuditStore.load(projectId),
                 restorePoints = snapshotManager.listSnapshots(projectId).map { info ->
                     RestorePoint(
                         id = info.path,
@@ -183,6 +190,7 @@ class BuildViewModel @Inject constructor(
                 val signingConfig = buildProfileManager.importKeystore(projectId, uri, displayName).copy(keyAlias = keyAlias.trim())
                 val updated = _uiState.value.buildProfile.copy(signing = signingConfig)
                 saveProfile(projectId, updated, storePassword, keyPassword)
+                _uiState.update { it.copy(signingAudit = signingAuditStore.load(projectId)) }
                 addTimeline("Signing", "Imported ${signingConfig.keystoreFileName}")
             }.onFailure { error ->
                 addTimeline("Signing", error.message ?: "Failed to import keystore", isError = true)
@@ -194,7 +202,7 @@ class BuildViewModel @Inject constructor(
     fun clearSigning() {
         val projectId = currentProjectId ?: return
         buildProfileManager.clearSigning(projectId)
-        _uiState.update { it.copy(buildProfile = buildProfileManager.loadProfile(projectId)) }
+        _uiState.update { it.copy(buildProfile = buildProfileManager.loadProfile(projectId), signingAudit = signingAuditStore.load(projectId)) }
     }
 
     fun startBuild() {
@@ -205,6 +213,21 @@ class BuildViewModel @Inject constructor(
             val project = projectRepository.getProjectById(projectId) ?: return@launch
             val buildId = UUID.randomUUID().toString()
             val buildProfile = buildProfileManager.loadProfile(projectId)
+            val preflightProblems = diagnosticsEngine.scan(project, File(project.projectPath), buildProfile)
+            if (preflightProblems.any { it.severity == ProblemSeverity.ERROR }) {
+                problemsService.replace(projectId, preflightProblems)
+                _uiState.update {
+                    it.copy(
+                        buildStatus = BuildStatus.FAILED,
+                        statusMessage = "Pre-build validation failed",
+                        errorSummary = preflightProblems.joinToString(" | ") { problem -> problem.title },
+                        problems = preflightProblems,
+                        buildProfile = buildProfile
+                    )
+                }
+                addTimeline("Preflight", "Blocked by diagnostics: ${preflightProblems.first().title}", isError = true)
+                return@launch
+            }
 
             val snapshot = snapshotManager.createSnapshot(projectId, File(project.projectPath), "pre_build")
             refreshRestorePoints()
@@ -256,7 +279,8 @@ class BuildViewModel @Inject constructor(
                         _uiState.update { state -> state.copy(logEntries = state.logEntries + event.entry) }
                     }
                     is BuildProjectUseCase.BuildEvent.Warning -> {
-                        val updatedProblems = _uiState.value.problems + BuildProblem(ProblemSeverity.WARNING, "Build warning", event.message)
+                        val updatedProblems = (_uiState.value.problems + BuildProblem(ProblemSeverity.WARNING, "Build warning", event.message))
+                            .distinctBy { listOf(it.title, it.detail, it.filePath, it.lineNumber) }
                         problemsService.replace(projectId, updatedProblems)
                         _uiState.update { state ->
                             state.copy(
@@ -293,6 +317,8 @@ class BuildViewModel @Inject constructor(
                             targetSdk = project.targetSdk
                         )
                         artifactRepository.insertArtifact(artifact)
+                        val finalProblems = diagnosticsEngine.scan(project, File(project.projectPath), buildProfile, _uiState.value.logEntries)
+                        problemsService.replace(projectId, finalProblems)
                         val provenance = ArtifactProvenance.from(
                             artifactId = artifact.id,
                             artifactPath = artifact.filePath,
@@ -302,12 +328,24 @@ class BuildViewModel @Inject constructor(
                             buildProfile = buildProfile,
                             changeSetIds = changeSetManager.list(projectId).take(10).map { it.id },
                             warnings = _uiState.value.compatibilityWarnings,
-                            problems = _uiState.value.problems,
+                            problems = finalProblems,
                             timeline = _uiState.value.timeline.map { "${it.label}: ${it.detail}" },
                             templateOrigin = project.template.displayName,
-                            validationSummary = _uiState.value.problems.joinToString(" | ") { it.title }.ifBlank { "Validation passed" }
+                            validationSummary = finalProblems.joinToString(" | ") { it.title }.ifBlank { "Validation passed" }
                         )
                         provenanceStore.save(provenance)
+                        if (buildProfile.variant == BuildVariant.RELEASE) {
+                            signingAuditStore.record(
+                                SigningAuditEntry(
+                                    projectId = projectId,
+                                    eventType = "RELEASE_EXPORT_SUCCESS",
+                                    detail = "Produced ${artifact.fileName} with ${buildProfile.artifactFormat.displayName} output.",
+                                    signerAlias = buildProfile.signing?.keyAlias?.takeIf { it.isNotBlank() },
+                                    variant = buildProfile.variant.name,
+                                    artifactFormat = buildProfile.artifactFormat.name
+                                )
+                            )
+                        }
                         _uiState.update {
                             it.copy(
                                 isBuilding = false,
@@ -315,7 +353,9 @@ class BuildViewModel @Inject constructor(
                                 buildStatus = BuildStatus.SUCCESS,
                                 statusMessage = "Build successful",
                                 latestArtifact = artifact,
-                                artifactProvenance = provenance
+                                artifactProvenance = provenance,
+                                problems = finalProblems,
+                                signingAudit = signingAuditStore.load(projectId)
                             )
                         }
                         addTimeline("Artifact", "Built ${artifact.fileName}")
@@ -339,14 +379,29 @@ class BuildViewModel @Inject constructor(
                         buildRepository.updateBuildRecord(failedRecord)
                         projectRepository.updateProject(project.copy(lastBuildStatus = BuildStatus.FAILED, lastBuildAt = completedAt))
                         val parsedProblems = parseProblems(event.error, _uiState.value.logEntries)
-                        problemsService.replace(projectId, parsedProblems)
+                        val diagnosticsProblems = diagnosticsEngine.scan(project, File(project.projectPath), buildProfile, _uiState.value.logEntries)
+                        val combinedProblems = (parsedProblems + diagnosticsProblems).distinctBy { listOf(it.title, it.detail, it.filePath, it.lineNumber) }
+                        problemsService.replace(projectId, combinedProblems)
+                        if (buildProfile.variant == BuildVariant.RELEASE) {
+                            signingAuditStore.record(
+                                SigningAuditEntry(
+                                    projectId = projectId,
+                                    eventType = "RELEASE_EXPORT_FAILED",
+                                    detail = event.error.take(240),
+                                    signerAlias = buildProfile.signing?.keyAlias?.takeIf { it.isNotBlank() },
+                                    variant = buildProfile.variant.name,
+                                    artifactFormat = buildProfile.artifactFormat.name
+                                )
+                            )
+                        }
                         _uiState.update {
                             it.copy(
                                 isBuilding = false,
                                 buildStatus = BuildStatus.FAILED,
                                 statusMessage = "Build failed",
                                 errorSummary = event.error,
-                                problems = parsedProblems
+                                problems = combinedProblems,
+                                signingAudit = signingAuditStore.load(projectId)
                             )
                         }
                         addTimeline("Build", event.error, isError = true)
@@ -450,7 +505,12 @@ class BuildViewModel @Inject constructor(
         keyPassword: String? = null
     ) {
         buildProfileManager.saveProfile(projectId, profile, storePassword, keyPassword)
-        _uiState.update { it.copy(buildProfile = buildProfileManager.loadProfile(projectId)) }
+        _uiState.update {
+            it.copy(
+                buildProfile = buildProfileManager.loadProfile(projectId),
+                signingAudit = signingAuditStore.load(projectId)
+            )
+        }
     }
 
     private fun parseProblems(failureMessage: String?, logs: List<BuildLogEntry>): List<BuildProblem> {

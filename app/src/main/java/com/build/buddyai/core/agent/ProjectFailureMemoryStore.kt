@@ -3,9 +3,9 @@ package com.build.buddyai.core.agent
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -15,12 +15,23 @@ class ProjectFailureMemoryStore @Inject constructor(
     @ApplicationContext private val context: Context,
     private val json: Json
 ) {
-    fun recordFailure(projectId: String, contextText: String, editedFiles: List<String>, request: String): String {
+
+    data class MemoryContext(
+        val templateFamily: String,
+        val buildEngine: String,
+        val language: String,
+        val requestHint: String = ""
+    )
+
+    fun recordFailure(projectId: String, contextText: String, editedFiles: List<String>, request: String, memoryContext: MemoryContext): String {
         val signature = signatureFor(contextText)
         val rootCause = classifyRootCause(contextText)
         val affectedAreas = inferAreas(editedFiles, contextText)
         val store = load(projectId).toMutableList()
-        val existing = store.indexOfFirst { it.signature == signature || (it.rootCauseClass == rootCause && it.affectedAreas == affectedAreas) }
+        val existing = store.indexOfFirst {
+            it.signature == signature ||
+                (it.rootCauseClass == rootCause && it.affectedAreas == affectedAreas && it.templateFamily == memoryContext.templateFamily)
+        }
         val updated = if (existing >= 0) {
             store[existing].copy(
                 occurrences = store[existing].occurrences + 1,
@@ -29,7 +40,10 @@ class ProjectFailureMemoryStore @Inject constructor(
                 recentRequest = request.take(1500),
                 recentEditedFiles = (editedFiles + store[existing].recentEditedFiles).distinct().take(20),
                 rootCauseClass = rootCause,
-                affectedAreas = affectedAreas
+                affectedAreas = affectedAreas,
+                templateFamily = memoryContext.templateFamily,
+                buildEngine = memoryContext.buildEngine,
+                language = memoryContext.language
             )
         } else {
             FailurePattern(
@@ -40,7 +54,10 @@ class ProjectFailureMemoryStore @Inject constructor(
                 recentRequest = request.take(1500),
                 recentEditedFiles = editedFiles.take(20),
                 rootCauseClass = rootCause,
-                affectedAreas = affectedAreas
+                affectedAreas = affectedAreas,
+                templateFamily = memoryContext.templateFamily,
+                buildEngine = memoryContext.buildEngine,
+                language = memoryContext.language
             )
         }
         if (existing >= 0) store[existing] = updated else store += updated
@@ -48,45 +65,45 @@ class ProjectFailureMemoryStore @Inject constructor(
         return updated.signature
     }
 
-    fun markResolved(projectId: String, signature: String, resolution: String) {
+    fun markResolved(projectId: String, signature: String, resolution: String, repairSequence: String = resolution) {
         val store = load(projectId).map { pattern ->
             if (pattern.signature == signature) {
                 pattern.copy(
                     lastResolution = resolution.take(1200),
                     resolvedCount = pattern.resolvedCount + 1,
-                    successfulRepairSequences = (pattern.successfulRepairSequences + resolution.take(400)).takeLast(8)
+                    successfulRepairSequences = (pattern.successfulRepairSequences + repairSequence.take(500)).takeLast(12)
                 )
             } else pattern
         }
         save(projectId, store)
     }
 
-    fun summarize(projectId: String, maxEntries: Int = 6): String {
+    fun summarize(projectId: String, memoryContext: MemoryContext, maxEntries: Int = 6): String {
         val entries = load(projectId)
-            .sortedByDescending { it.localSuccessScore() }
+            .sortedByDescending { rank(it, memoryContext) }
             .take(maxEntries)
         if (entries.isEmpty()) return "No prior local failure memory."
         return buildString {
             appendLine("Local learned repair memory:")
             entries.forEachIndexed { index, entry ->
-                append(index + 1)
-                append(". signature=")
-                append(entry.signature)
-                append(" rootCause=")
-                append(entry.rootCauseClass)
-                append(" areas=")
-                append(entry.affectedAreas.joinToString())
-                append(" occurrences=")
-                append(entry.occurrences)
-                append(" resolved=")
-                append(entry.resolvedCount)
-                append(" successScore=")
-                append(String.format("%.2f", entry.localSuccessScore()))
-                appendLine()
+                appendLine(
+                    "${index + 1}. signature=${entry.signature} rootCause=${entry.rootCauseClass} template=${entry.templateFamily} engine=${entry.buildEngine} occurrences=${entry.occurrences} resolved=${entry.resolvedCount} rank=${"%.2f".format(rank(entry, memoryContext))}"
+                )
+                appendLine("   areas: ${entry.affectedAreas.joinToString()}")
                 appendLine("   context: ${entry.recentContext.lineSequence().take(3).joinToString(" | ")}")
                 if (entry.lastResolution.isNotBlank()) appendLine("   last successful repair: ${entry.lastResolution}")
+                if (entry.successfulRepairSequences.isNotEmpty()) appendLine("   winning sequence: ${entry.successfulRepairSequences.last()}")
             }
         }.trim()
+    }
+
+    private fun rank(entry: FailurePattern, context: MemoryContext): Double {
+        var score = entry.localSuccessScore() * 10.0
+        if (entry.templateFamily == context.templateFamily) score += 4.0
+        if (entry.buildEngine == context.buildEngine) score += 3.0
+        if (entry.language == context.language) score += 2.0
+        if (context.requestHint.isNotBlank() && entry.recentRequest.contains(context.requestHint, ignoreCase = true)) score += 1.5
+        return score
     }
 
     private fun signatureFor(raw: String): String = raw
@@ -141,7 +158,7 @@ class ProjectFailureMemoryStore @Inject constructor(
     private fun save(projectId: String, entries: List<FailurePattern>) {
         file(projectId).apply {
             parentFile?.mkdirs()
-            writeText(json.encodeToString<List<FailurePattern>>(entries.sortedByDescending { it.lastSeenAt }.take(40)))
+            writeText(json.encodeToString<List<FailurePattern>>(entries.sortedByDescending { it.lastSeenAt }.take(60)))
         }
     }
 
@@ -159,7 +176,10 @@ class ProjectFailureMemoryStore @Inject constructor(
         val lastResolution: String = "",
         val rootCauseClass: String = "general",
         val affectedAreas: List<String> = emptyList(),
-        val successfulRepairSequences: List<String> = emptyList()
+        val successfulRepairSequences: List<String> = emptyList(),
+        val templateFamily: String = "general",
+        val buildEngine: String = "on-device-aapt2-ecj-d8",
+        val language: String = "unknown"
     ) {
         fun localSuccessScore(): Double = (resolvedCount.toDouble() + 1.0) / (occurrences.toDouble() + 1.0)
     }

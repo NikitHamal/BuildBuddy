@@ -1,25 +1,16 @@
 package com.build.buddyai.domain.usecase.ondevice
 
 import android.content.Context
+import com.build.buddyai.core.agent.ManifestPlaceholderResolver
 import com.build.buddyai.core.common.BuildProfileManager
 import com.build.buddyai.core.common.FileUtils
 import com.build.buddyai.core.model.BuildProfile
-import com.build.buddyai.core.model.BuildVariant
 import com.build.buddyai.core.model.Project
 import java.io.File
 
-/**
- * Orchestrates the complete on-device build pipeline:
- *
- *   1. Initialize build tools (AAPT2, android.jar, signing material)
- *   2. AAPT2: Compile resources -> R.java + resources.ap_
- *   3. ECJ:   Compile Java sources -> .class files
- *   4. D8:    Convert .class -> classes.dex
- *   5. APK:   Package + sign -> final .apk
- *   6. Parse validation: ensure Android can open the APK we just produced
- */
 class OnDeviceBuildPipeline(
-    private val context: Context
+    private val context: Context,
+    private val manifestPlaceholderResolver: ManifestPlaceholderResolver = ManifestPlaceholderResolver()
 ) {
     data class BuildResult(val apkPath: String, val apkSize: Long)
 
@@ -41,18 +32,25 @@ class OnDeviceBuildPipeline(
         val buildDir = File(projectDir, ".build").also { it.mkdirs() }
         val classOutputDir = File(buildDir, "classes").also { it.mkdirs() }
         val dexOutputDir = File(buildDir, "dex").also { it.mkdirs() }
+        val variantDir = File(buildDir, "variant/${buildProfile.variant.name.lowercase()}_${buildProfile.flavorName.ifBlank { "main" }}").also { it.mkdirs() }
 
         val projectBuildTools = File(projectDir, "build_tools").also { it.mkdirs() }
         val projectStubsJar = File(projectBuildTools, "javax-lang-model-stubs.jar")
-        if (!projectStubsJar.exists() && env.javaxLangModelStubsJar.exists()) {
-            env.javaxLangModelStubsJar.copyTo(projectStubsJar)
-        }
+        if (!projectStubsJar.exists() && env.javaxLangModelStubsJar.exists()) env.javaxLangModelStubsJar.copyTo(projectStubsJar)
 
         validateProjectSources(projectDir)
 
-        val packageName = resolvePackageName(projectDir)
+        val stagedManifest = File(variantDir, "AndroidManifest.xml")
+        val placeholderResult = manifestPlaceholderResolver.stage(project, projectDir, buildProfile, variantDir)
+        if (!placeholderResult.isValid) throw RuntimeException("Manifest placeholder resolution failed: ${placeholderResult.unresolvedKeys.joinToString()}")
+        onLog("Resolved manifest placeholders: ${placeholderResult.resolvedValues.keys.joinToString()}")
+        placeholderResult.warnings.forEach(onLog)
+
+        val packageName = resolvePackageName(stagedManifest, project.packageName)
         val minSdk = 21
         val targetSdk = 35
+        val versionCode = (buildProfile.versionCodeOverride ?: 1).toString()
+        val versionName = buildProfile.versionNameOverride ?: "1.0.0${buildProfile.versionNameSuffix}"
 
         onProgress(0.15f, "Compiling resources with AAPT2…")
         onLog("Stage 1/4: AAPT2 resource compilation")
@@ -62,8 +60,11 @@ class OnDeviceBuildPipeline(
             projectDir = projectDir,
             packageName = packageName,
             androidJar = env.androidJar,
+            manifestFileOverride = stagedManifest,
             minSdkVersion = minSdk,
             targetSdkVersion = targetSdk,
+            versionCode = versionCode,
+            versionName = versionName,
             log = onLog
         )
         aapt2.compile()
@@ -71,29 +72,25 @@ class OnDeviceBuildPipeline(
 
         onProgress(0.40f, "Compiling Java sources…")
         onLog("Stage 2/4: ECJ Java compilation")
-
-        val ecj = EcjCompiler(
+        EcjCompiler(
             projectDir = projectDir,
             androidJar = env.androidJar,
             coreLambdaStubsJar = env.coreLambdaStubsJar,
             classOutputDir = classOutputDir,
             rJavaDir = File(aapt2.rJavaDir),
             log = onLog
-        )
-        ecj.compile()
+        ).compile()
         onLog("Java compilation complete")
 
         onProgress(0.65f, "Converting to DEX with D8…")
         onLog("Stage 3/4: D8 DEX compilation")
-
-        val d8 = D8Dexer(
+        D8Dexer(
             classOutputDir = classOutputDir,
             androidJar = env.androidJar,
             dexOutputDir = dexOutputDir,
             minApiLevel = minSdk,
             log = onLog
-        )
-        d8.dex()
+        ).dex()
         onLog("DEX compilation complete")
 
         onProgress(0.85f, "Packaging and signing APK…")
@@ -101,9 +98,10 @@ class OnDeviceBuildPipeline(
 
         val sanitizedName = project.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
         val variantName = buildProfile.variant.name.lowercase()
-        val outputApkPath = File(FileUtils.getArtifactsDir(context), "${sanitizedName}_${variantName}_$buildId.apk").absolutePath
+        val flavorName = buildProfile.flavorName.ifBlank { "main" }.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val outputApkPath = File(FileUtils.getArtifactsDir(context), "${sanitizedName}_${variantName}_${flavorName}_$buildId.apk").absolutePath
 
-        val packager = ApkPackager(
+        ApkPackager(
             resourcesApkPath = aapt2.resourcesApkPath,
             dexOutputDir = dexOutputDir,
             testkeyDir = env.testkeyDir,
@@ -112,48 +110,27 @@ class OnDeviceBuildPipeline(
             signingConfig = buildProfile.signing,
             signingSecrets = signingSecrets,
             log = onLog
-        )
-        packager.packageAndSign()
+        ).packageAndSign()
 
         val apkFile = File(outputApkPath)
-        BuiltApkInspector.verifyParseable(
-            context = context,
-            apkFile = apkFile,
-            expectedPackageName = packageName,
-            log = onLog
-        )
-
+        BuiltApkInspector.verifyParseable(context = context, apkFile = apkFile, expectedPackageName = packageName, log = onLog)
         onProgress(1.0f, "Build complete")
         onLog("APK ready: $outputApkPath (${apkFile.length()} bytes)")
-
         return BuildResult(outputApkPath, apkFile.length())
     }
 
-    private fun resolvePackageName(projectDir: File): String {
-        val manifest = File(projectDir, "app/src/main/AndroidManifest.xml")
-        if (!manifest.exists()) return "com.example.app"
-        return try {
-            val content = manifest.readText()
-            val match = Regex("""package\s*=\s*["']([^"']+)["']""").find(content)
-            match?.groupValues?.get(1) ?: "com.example.app"
-        } catch (_: Exception) {
-            "com.example.app"
-        }
-    }
+    private fun resolvePackageName(manifestFile: File, fallback: String): String = try {
+        Regex("""package\s*=\s*["']([^"']+)["']""").find(manifestFile.readText())?.groupValues?.get(1) ?: fallback
+    } catch (_: Exception) { fallback }
 
     private fun validateProjectSources(projectDir: File) {
-        val kotlinFiles = sequenceOf(
-            File(projectDir, "app/src/main/java"),
-            File(projectDir, "app/src/main/kotlin")
-        ).filter { it.exists() }
+        val kotlinFiles = sequenceOf(File(projectDir, "app/src/main/java"), File(projectDir, "app/src/main/kotlin"))
+            .filter { it.exists() }
             .flatMap { root -> root.walkTopDown().filter { it.isFile && it.extension == "kt" } }
             .map { it.relativeTo(projectDir).invariantSeparatorsPath }
             .toList()
-
         if (kotlinFiles.isNotEmpty()) {
-            throw RuntimeException(
-                "On-device validation currently supports Java source compilation only. This project contains Kotlin sources that cannot be compiled by the ECJ-based pipeline yet: ${kotlinFiles.take(10).joinToString()}."
-            )
+            throw RuntimeException("On-device validation currently supports Java source compilation only. This project contains Kotlin sources that cannot be compiled by the ECJ-based pipeline yet: ${kotlinFiles.take(10).joinToString()}.")
         }
     }
 }
