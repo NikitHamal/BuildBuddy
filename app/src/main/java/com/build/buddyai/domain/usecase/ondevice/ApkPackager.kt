@@ -28,20 +28,20 @@ class ApkPackager(
     fun packageAndSign() {
         val unsignedApk = File("${outputApkPath}.unsigned.apk")
         val alignedApk = File("${outputApkPath}.aligned.apk")
-        
+
         // Step 1: Package resources + DEX into unsigned APK
         packageApk(unsignedApk)
-        
+
         // Step 2: Zipalign the APK (optimizes memory usage at runtime)
         zipalignApk(unsignedApk, alignedApk)
-        
+
         // Step 3: Sign the aligned APK
         signApk(alignedApk, File(outputApkPath))
-        
+
         // Clean up intermediate files
         unsignedApk.delete()
         alignedApk.delete()
-        
+
         log("[APK] Final signed APK: ${outputApkPath} (${File(outputApkPath).length()} bytes)")
     }
 
@@ -50,48 +50,92 @@ class ApkPackager(
         output.parentFile?.mkdirs()
         log("[APK] Packaging resources + DEX -> ${output.name}")
 
-        ZipOutputStream(output.outputStream().buffered()).use { zos ->
-            val resourcesApk = File(resourcesApkPath)
-            log("[APK] Looking for resources.ap_ at: $resourcesApkPath")
-            log("[APK] resources.ap_ exists: ${resourcesApk.exists()}, size: ${if (resourcesApk.exists()) resourcesApk.length() else 0}")
-            
-            if (resourcesApk.exists()) {
-                log("[APK] Copying resources from: ${resourcesApk.name} (${resourcesApk.length()} bytes)")
-                ZipInputStream(resourcesApk.inputStream().buffered()).use { zis ->
-                    copyZipEntries(zis, zos, excludeSignatureFiles = true)
-                }
-            } else {
-                log("[APK] ERROR: resources.ap_ NOT FOUND at: $resourcesApkPath")
-                log("[APK] WARNING: APK will be missing resources and manifest!")
-            }
-
-            dexOutputDir.listFiles()
-                ?.filter { it.isFile && it.extension == "dex" }
-                ?.sortedBy { it.name }
-                ?.forEach { dexFile ->
-                    log("[APK] Adding ${dexFile.name} (${dexFile.length()} bytes)")
-                    zos.putNextEntry(ZipEntry(dexFile.name))
-                    dexFile.inputStream().use { it.copyTo(zos) }
-                    zos.closeEntry()
-                }
+        val resourcesApk = File(resourcesApkPath)
+        log("[APK] Checking resources.ap_: $resourcesApkPath")
+        
+        if (!resourcesApk.exists()) {
+            log("[APK] ERROR: resources.ap_ NOT FOUND at: $resourcesApkPath")
+            throw RuntimeException("AAPT2 did not create resources.ap_ at:\n$resourcesApkPath\n\n" +
+                "Possible causes:\n" +
+                "1. AAPT2 link failed (check AAPT2 logs above)\n" +
+                "2. AndroidManifest.xml has syntax errors\n" +
+                "3. Resource files have invalid names/structure")
         }
         
-        // Verify the APK was created properly
-        if (output.exists()) {
-            val zipEntries = mutableListOf<String>()
-            java.util.zip.ZipFile(output).use { zip ->
-                zip.entries().asSequence().forEach { entry -> zipEntries.add(entry.name) }
+        log("[APK] resources.ap_ found (${resourcesApk.length()} bytes), copying contents...")
+
+        // List what's in resources.ap_
+        val resEntries = mutableListOf<String>()
+        try {
+            java.util.zip.ZipFile(resourcesApk).use { zip ->
+                zip.entries().asSequence().forEach { resEntries.add(it.name) }
             }
-            log("[APK] APK contains ${zipEntries.size} entries: ${zipEntries.joinToString(", ")}")
-            
-            // Verify critical entries
-            val hasManifest = zipEntries.contains("AndroidManifest.xml")
-            val hasDex = zipEntries.any { it.endsWith(".dex") }
-            val hasResources = zipEntries.contains("resources.arsc")
-            
-            if (!hasManifest) log("[APK] ERROR: Missing AndroidManifest.xml - APK WILL NOT INSTALL!")
-            if (!hasDex) log("[APK] WARNING: No classes.dex found!")
-            if (!hasResources) log("[APK] ERROR: Missing resources.arsc - APK WILL NOT INSTALL!")
+            log("[APK] resources.ap_ contains: ${resEntries.joinToString(", ")}")
+        } catch (e: Exception) {
+            log("[APK] WARNING: Could not list resources.ap_ contents: ${e.message}")
+        }
+
+        ZipOutputStream(output.outputStream().buffered()).use { zos ->
+            // Copy entries from resources.ap_
+            ZipInputStream(resourcesApk.inputStream().buffered()).use { zis ->
+                var entryCount = 0
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    val name = entry.name
+                    val isSignatureFile = name.startsWith("META-INF/") &&
+                        (name.endsWith(".SF") || name.endsWith(".RSA") || name.endsWith(".DSA"))
+
+                    if (!isSignatureFile) {
+                        try {
+                            zos.putNextEntry(ZipEntry(name))
+                            if (!entry.isDirectory) {
+                                zis.copyTo(zos)
+                            }
+                            zos.closeEntry()
+                            entryCount++
+                            log("[APK]   Copied: $name")
+                        } catch (e: Exception) {
+                            log("[APK]   FAILED to copy $name: ${e.message}")
+                        }
+                    } else {
+                        log("[APK]   Skipped signature: $name")
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                }
+                log("[APK] Copied $entryCount entries from resources.ap_")
+            }
+
+            // Add DEX files
+            val dexFiles = dexOutputDir.listFiles()
+                ?.filter { it.isFile && it.extension == "dex" }
+                ?.sortedBy { it.name }
+                ?: emptyList()
+
+            if (dexFiles.isEmpty()) {
+                log("[APK] WARNING: No DEX files found in: ${dexOutputDir.absolutePath}")
+            }
+
+            dexFiles.forEach { dexFile ->
+                log("[APK] Adding ${dexFile.name} (${dexFile.length()} bytes)")
+                zos.putNextEntry(ZipEntry(dexFile.name))
+                dexFile.inputStream().use { it.copyTo(zos) }
+                zos.closeEntry()
+            }
+        }
+
+        // Final APK summary
+        if (output.exists()) {
+            val entries = mutableListOf<String>()
+            try {
+                java.util.zip.ZipFile(output).use { zip ->
+                    zip.entries().asSequence().forEach { entries.add("${it.name} (${it.compressedSize}b)") }
+                }
+            } catch (e: Exception) {}
+            log("[APK] Final unsigned APK: ${entries.size} entries, ${output.length()} bytes")
+            if (entries.size <= 20) {
+                entries.forEach { log("[APK]   $it") }
+            }
         }
     }
 
@@ -114,7 +158,7 @@ class ApkPackager(
     // Step 3: Sign the APK
     private fun signApk(unsignedApk: File, signedApk: File) {
         log("[APK] Signing with test key...")
-        
+
         // Try reflection-based external signer first
         try {
             val signerClass = Class.forName("mod.alucard.tn.apksigner.ApkSigner")
@@ -127,7 +171,7 @@ class ApkPackager(
         } catch (e: Exception) {
             log("[APK] ApkSigner not available (Reason: ${e.message}), using apksig library...")
         }
-        
+
         // Fallback: Use official apksig library
         signWithApkSig(unsignedApk, signedApk)
     }
@@ -155,7 +199,7 @@ class ApkPackager(
             log("[APK] Key file size: ${pkBytes.size} bytes")
             val pkcs8Key = stripPkcs8Headers(pkBytes)
             log("[APK] Decoded key size: ${pkcs8Key.size} bytes")
-            
+
             val keySpec = PKCS8EncodedKeySpec(pkcs8Key)
             val privateKey = KeyFactory.getInstance("RSA").generatePrivate(keySpec)
             log("[APK] Private key loaded: ${privateKey.algorithm}, format: ${privateKey.format}")
@@ -174,7 +218,7 @@ class ApkPackager(
             ApkSigner.Builder(listOf(signerConfig))
                 .setInputApk(unsignedApk)
                 .setOutputApk(signedApk)
-                .setV1SigningEnabled(false)  // Disable JAR signing, only use v2/v3 APK signatures
+                .setV1SigningEnabled(false)
                 .setV2SigningEnabled(true)
                 .setV3SigningEnabled(true)
                 .build()
@@ -197,7 +241,7 @@ class ApkPackager(
      */
     private fun stripPkcs8Headers(keyBytes: ByteArray): ByteArray {
         val content = String(keyBytes)
-        
+
         // Check if it's PEM encoded
         if (content.contains("-----BEGIN")) {
             val base64Content = content
@@ -206,34 +250,11 @@ class ApkPackager(
                 .replace("-----BEGIN ENCRYPTED PRIVATE KEY-----", "")
                 .replace("-----END ENCRYPTED PRIVATE KEY-----", "")
                 .replace("\\s".toRegex(), "")
-            
+
             return android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT)
         }
-        
+
         // Already DER encoded
         return keyBytes
-    }
-
-    private fun copyZipEntries(zis: ZipInputStream, zos: ZipOutputStream, excludeSignatureFiles: Boolean) {
-        var entry = zis.nextEntry
-        while (entry != null) {
-            val name = entry.name
-            if (excludeSignatureFiles && (name.startsWith("META-INF/") && (name.endsWith(".SF") || name.endsWith(".RSA") || name.endsWith(".DSA")))) {
-                zis.closeEntry()
-                entry = zis.nextEntry
-                continue
-            }
-            try {
-                zos.putNextEntry(ZipEntry(name))
-                if (!entry.isDirectory) {
-                    zis.copyTo(zos)
-                }
-                zos.closeEntry()
-            } catch (_: java.util.zip.ZipException) {
-                // skip duplicates
-            }
-            zis.closeEntry()
-            entry = zis.nextEntry
-        }
     }
 }

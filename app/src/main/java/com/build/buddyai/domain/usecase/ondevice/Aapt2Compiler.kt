@@ -123,5 +123,23 @@ class Aapt2Compiler(
         if (exitCode != 0) {
             throw RuntimeException("$tag failed (exit $exitCode):\n$output")
         }
+        
+        // Log output file details if this was a link/compile that produces files
+        if (tag == "AAPT2 link") {
+            val outputApk = File(resourcesApkPath)
+            if (outputApk.exists()) {
+                log("[AAPT2] Output created: ${outputApk.absolutePath} (${outputApk.length()} bytes)")
+                try {
+                    java.util.zip.ZipFile(outputApk).use { zip ->
+                        val entries = zip.entries().asSequence().toList()
+                        log("[AAPT2] Contents: ${entries.map { it.name }.joinToString(", ")}")
+                    }
+                } catch (e: Exception) {
+                    log("[AAPT2] WARNING: Could not read output: ${e.message}")
+                }
+            } else {
+                log("[AAPT2] ERROR: Expected output file NOT CREATED: ${outputApk.absolutePath}")
+            }
+        }
     }
 }
