@@ -79,22 +79,57 @@ class ProjectFailureMemoryStore @Inject constructor(
     }
 
     fun summarize(projectId: String, memoryContext: MemoryContext, maxEntries: Int = 6): String {
-        val entries = load(projectId)
+        val localEntries = load(projectId)
             .sortedByDescending { rank(it, memoryContext) }
             .take(maxEntries)
-        if (entries.isEmpty()) return "No prior local failure memory."
+        val globalFallback = loadGlobalFallback(projectId, memoryContext, maxEntries = 4)
+            .filterNot { global -> localEntries.any { it.signature == global.signature } }
+            .take(3)
+
+        if (localEntries.isEmpty() && globalFallback.isEmpty()) return "No prior failure memory."
         return buildString {
-            appendLine("Local learned repair memory:")
-            entries.forEachIndexed { index, entry ->
-                appendLine(
-                    "${index + 1}. signature=${entry.signature} rootCause=${entry.rootCauseClass} template=${entry.templateFamily} engine=${entry.buildEngine} occurrences=${entry.occurrences} resolved=${entry.resolvedCount} rank=${"%.2f".format(rank(entry, memoryContext))}"
-                )
-                appendLine("   areas: ${entry.affectedAreas.joinToString()}")
-                appendLine("   context: ${entry.recentContext.lineSequence().take(3).joinToString(" | ")}")
-                if (entry.lastResolution.isNotBlank()) appendLine("   last successful repair: ${entry.lastResolution}")
-                if (entry.successfulRepairSequences.isNotEmpty()) appendLine("   winning sequence: ${entry.successfulRepairSequences.last()}")
+            if (localEntries.isNotEmpty()) {
+                appendLine("Local learned repair memory:")
+                localEntries.forEachIndexed { index, entry ->
+                    appendLine(
+                        "${index + 1}. signature=${entry.signature} rootCause=${entry.rootCauseClass} template=${entry.templateFamily} engine=${entry.buildEngine} occurrences=${entry.occurrences} resolved=${entry.resolvedCount} rank=${"%.2f".format(rank(entry, memoryContext))}"
+                    )
+                    appendLine("   areas: ${entry.affectedAreas.joinToString()}")
+                    appendLine("   context: ${entry.recentContext.lineSequence().take(3).joinToString(" | ")}")
+                    if (entry.lastResolution.isNotBlank()) appendLine("   last successful repair: ${entry.lastResolution}")
+                    if (entry.successfulRepairSequences.isNotEmpty()) appendLine("   winning sequence: ${entry.successfulRepairSequences.last()}")
+                }
+            }
+            if (globalFallback.isNotEmpty()) {
+                if (localEntries.isNotEmpty()) appendLine()
+                appendLine("Cross-project fallback memory:")
+                globalFallback.forEachIndexed { index, entry ->
+                    appendLine(
+                        "${index + 1}. signature=${entry.signature} rootCause=${entry.rootCauseClass} template=${entry.templateFamily} engine=${entry.buildEngine} occurrences=${entry.occurrences} resolved=${entry.resolvedCount} rank=${"%.2f".format(rank(entry, memoryContext))}"
+                    )
+                    appendLine("   areas: ${entry.affectedAreas.joinToString()}")
+                    appendLine("   context: ${entry.recentContext.lineSequence().take(2).joinToString(" | ")}")
+                    if (entry.lastResolution.isNotBlank()) appendLine("   last successful repair: ${entry.lastResolution}")
+                }
             }
         }.trim()
+    }
+
+    private fun loadGlobalFallback(projectId: String, memoryContext: MemoryContext, maxEntries: Int): List<FailurePattern> {
+        val dir = File(context.filesDir, "agent_failure_memory")
+        if (!dir.exists() || !dir.isDirectory) return emptyList()
+        return dir.listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter { it.isFile && it.extension.equals("json", ignoreCase = true) }
+            .filterNot { it.nameWithoutExtension == projectId }
+            .mapNotNull { file ->
+                runCatching { json.decodeFromString<List<FailurePattern>>(file.readText()) }.getOrNull()
+            }
+            .flatten()
+            .sortedByDescending { rank(it, memoryContext) }
+            .take(maxEntries)
+            .toList()
     }
 
     private fun rank(entry: FailurePattern, context: MemoryContext): Double {
