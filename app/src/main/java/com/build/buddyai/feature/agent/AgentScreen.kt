@@ -91,6 +91,7 @@ fun AgentScreen(
 ) {
     val viewModel: AgentViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val stableMessages = uiState.messages.asReversed().distinctBy { it.id }.asReversed()
     val listState = rememberLazyListState()
     val context = LocalContext.current
     val latestArtifact = uiState.latestArtifact
@@ -316,7 +317,7 @@ fun AgentScreen(
                         }
                     }
 
-                    if (uiState.messages.isEmpty()) {
+                    if (stableMessages.isEmpty()) {
                         item {
                             NvEmptyState(
                                 icon = Icons.Filled.AutoAwesome,
@@ -326,7 +327,7 @@ fun AgentScreen(
                             )
                         }
                     } else {
-                        items(uiState.messages, key = { it.id }) { message ->
+                        items(stableMessages, key = { it.id }) { message ->
                             ChatMessageItem(message = message)
                         }
                     }

@@ -66,12 +66,13 @@ fun AgentTab(
     viewModel: AgentViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val stableMessages = uiState.messages.asReversed().distinctBy { it.id }.asReversed()
     val listState = rememberLazyListState()
 
     LaunchedEffect(projectId) { viewModel.initialize(projectId) }
     LaunchedEffect(uiState.messages.size, uiState.executionTimeline.size, uiState.currentActions.size) {
         val lastIndex = when {
-            uiState.messages.isNotEmpty() -> uiState.messages.size
+            stableMessages.isNotEmpty() -> stableMessages.size
             uiState.executionTimeline.isNotEmpty() || uiState.currentActions.isNotEmpty() -> 1
             else -> 0
         }
@@ -96,7 +97,7 @@ fun AgentTab(
                 contentPadding = PaddingValues(horizontal = NvSpacing.Sm, vertical = NvSpacing.Xs),
                 verticalArrangement = Arrangement.spacedBy(NvSpacing.Xs)
             ) {
-                if (uiState.messages.isEmpty()) {
+                if (stableMessages.isEmpty()) {
                     item {
                         NvEmptyState(
                             icon = Icons.Filled.Psychology,
@@ -106,7 +107,7 @@ fun AgentTab(
                         )
                     }
                 } else {
-                    items(uiState.messages, key = { it.id }) { message ->
+                    items(stableMessages, key = { it.id }) { message ->
                         ChatMessageItem(message = message)
                     }
                 }

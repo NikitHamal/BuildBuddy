@@ -268,7 +268,7 @@ class AgentViewModel @Inject constructor(
         }
         messagesJob = viewModelScope.launch {
             chatRepository.getMessagesBySession(sessionId).collectLatest { messages ->
-                _uiState.update { it.copy(messages = messages) }
+                _uiState.update { it.copy(messages = deduplicateMessages(messages)) }
             }
         }
     }
@@ -503,7 +503,12 @@ class AgentViewModel @Inject constructor(
                 modelId = modelId
             )
             chatRepository.insertMessage(placeholder)
-            _uiState.update { state -> state.copy(isStreaming = true, messages = state.messages + placeholder) }
+            _uiState.update { state ->
+                state.copy(
+                    isStreaming = true,
+                    messages = deduplicateMessages(state.messages + placeholder)
+                )
+            }
 
             val systemPrompt = buildExecutionSystemPrompt(contextSnapshot.prompt, plan)
             val turnPrompt = buildTurnPrompt(visibleUserInput, repairContext)
@@ -2109,6 +2114,9 @@ class AgentViewModel @Inject constructor(
         } catch (_: IllegalArgumentException) {
             null
         }
+
+    private fun deduplicateMessages(messages: List<ChatMessage>): List<ChatMessage> =
+        messages.asReversed().distinctBy { it.id }.asReversed()
 
     private data class BuildOutcome(
         val status: BuildStatus,
