@@ -51,6 +51,10 @@ class EditorViewModel @Inject constructor(
     private val settingsDataStore: SettingsDataStore,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
+    companion object {
+        private const val MAX_HISTORY_ENTRIES_PER_FILE = 60
+        private const val MAX_HISTORY_SNAPSHOT_CHARS = 200_000
+    }
 
     private val _uiState = MutableStateFlow(EditorUiState())
     val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
@@ -133,7 +137,7 @@ class EditorViewModel @Inject constructor(
 
         val current = state.openFiles[index]
         val history = historyByPath[current.path] ?: FileHistory()
-        historyByPath[current.path] = history.copy(undo = history.undo + current.content, redo = emptyList())
+        historyByPath[current.path] = pushUndoSnapshot(history, current.content)
 
         _uiState.update {
             val files = it.openFiles.toMutableList()
@@ -175,7 +179,7 @@ class EditorViewModel @Inject constructor(
         val previous = history.undo.last()
         historyByPath[active.path] = history.copy(
             undo = history.undo.dropLast(1),
-            redo = history.redo + active.content
+            redo = (history.redo + active.content).takeLast(MAX_HISTORY_ENTRIES_PER_FILE)
         )
         replaceActiveFileContent(previous)
         syncHistoryUi(active.path)
@@ -187,11 +191,22 @@ class EditorViewModel @Inject constructor(
         if (history.redo.isEmpty()) return
         val next = history.redo.last()
         historyByPath[active.path] = history.copy(
-            undo = history.undo + active.content,
+            undo = (history.undo + active.content).takeLast(MAX_HISTORY_ENTRIES_PER_FILE),
             redo = history.redo.dropLast(1)
         )
         replaceActiveFileContent(next)
         syncHistoryUi(active.path)
+    }
+
+    private fun pushUndoSnapshot(history: FileHistory, content: String): FileHistory {
+        if (content.length > MAX_HISTORY_SNAPSHOT_CHARS) {
+            // Avoid storing huge snapshots for every keystroke.
+            return history.copy(redo = emptyList())
+        }
+        return history.copy(
+            undo = (history.undo + content).takeLast(MAX_HISTORY_ENTRIES_PER_FILE),
+            redo = emptyList()
+        )
     }
 
     fun toggleSearch() = _uiState.update { it.copy(showSearch = !it.showSearch) }

@@ -34,7 +34,7 @@ class ProjectIntegrityChecker @Inject constructor() {
             errors += "Missing manifest: app/src/main/AndroidManifest.xml"
         } else {
             val manifestText = manifest.readText()
-            val manifestPackage = Regex("""package\s*=\s*\"([^\"]+)\"""")
+            val manifestPackage = Regex("""package\s*=\s*["']([^"']+)["']""")
                 .find(manifestText)?.groupValues?.get(1)
             if (manifestPackage.isNullOrBlank()) {
                 errors += "Manifest package is missing."

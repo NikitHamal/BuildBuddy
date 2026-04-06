@@ -127,8 +127,15 @@ object FileUtils {
         outputZip.parentFile?.mkdirs()
         ZipOutputStream(FileOutputStream(outputZip)).use { zos ->
             canonicalSourceDir.walkTopDown().forEach { file ->
-                if (file.isFile) {
-                    val entry = ZipEntry(file.relativeTo(canonicalSourceDir).invariantSeparatorsPath)
+                val relativePath = file.relativeTo(canonicalSourceDir).invariantSeparatorsPath
+                if (file.isDirectory) {
+                    if (relativePath.isNotBlank() && file.listFiles().isNullOrEmpty()) {
+                        val entryName = if (relativePath.endsWith("/")) relativePath else "$relativePath/"
+                        zos.putNextEntry(ZipEntry(entryName))
+                        zos.closeEntry()
+                    }
+                } else if (file.isFile) {
+                    val entry = ZipEntry(relativePath)
                     zos.putNextEntry(entry)
                     file.inputStream().use { it.copyTo(zos) }
                     zos.closeEntry()

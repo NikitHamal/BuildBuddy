@@ -402,7 +402,13 @@ class AgentViewModel @Inject constructor(
 
             val systemPrompt = buildExecutionSystemPrompt(contextSnapshot.prompt, plan)
             val turnPrompt = buildTurnPrompt(visibleUserInput, repairContext)
-            val requestMessages = buildRequestMessages(systemPrompt, turnPrompt, attachedFiles)
+            val requestMessages = buildRequestMessages(
+                systemPrompt = systemPrompt,
+                turnPrompt = turnPrompt,
+                attachedFiles = attachedFiles,
+                modelId = modelId,
+                liveContextWindow = modelContextWindow
+            )
             val rawContent = streamModelResponse(
                 providerType = provider.type,
                 apiKey = apiKey,
@@ -1110,6 +1116,12 @@ class AgentViewModel @Inject constructor(
         return (contextWindow * 3).coerceIn(40_000, 300_000)
     }
 
+    private fun dynamicHistoryBudget(modelId: String, liveContextWindow: Int? = null): Int {
+        val modelInfo = ModelMetadataRegistry.getModelInfo(modelId)
+        val contextWindow = liveContextWindow ?: modelInfo?.contextWindow ?: 32_768
+        return (contextWindow * 2).coerceIn(8_000, 120_000)
+    }
+
     private suspend fun persistSystemMessage(sessionId: String, content: String) {
         chatRepository.insertMessage(
             ChatMessage(
@@ -1122,9 +1134,26 @@ class AgentViewModel @Inject constructor(
         )
     }
 
-    private fun buildRequestMessages(systemPrompt: String, turnPrompt: String, attachedFiles: List<String>): List<AiChatMessage> = buildList {
+    private fun buildRequestMessages(
+        systemPrompt: String,
+        turnPrompt: String,
+        attachedFiles: List<String>,
+        modelId: String,
+        liveContextWindow: Int? = null
+    ): List<AiChatMessage> = buildList {
         add(AiChatMessage(role = "system", text = systemPrompt))
-        _uiState.value.messages.takeLast(20).forEach { message ->
+
+        val historyBudget = dynamicHistoryBudget(modelId, liveContextWindow)
+        val selected = ArrayDeque<ChatMessage>()
+        var consumed = 0
+        _uiState.value.messages.asReversed().forEach { message ->
+            val estimatedCost = message.content.length + (message.attachedFiles.size * 256) + 64
+            if (selected.size >= 48 || consumed + estimatedCost > historyBudget) return@forEach
+            selected.addFirst(message)
+            consumed += estimatedCost
+        }
+
+        selected.forEach { message ->
             add(
                 AiChatMessage(
                     role = when (message.role) {

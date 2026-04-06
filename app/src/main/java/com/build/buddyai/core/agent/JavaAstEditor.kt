@@ -24,7 +24,8 @@ class JavaAstEditor @Inject constructor() {
         }
         LexicalPreservingPrinter.setup(compilationUnit)
         operations.forEach { applyOperation(compilationUnit, it) }
-        return LexicalPreservingPrinter.print(compilationUnit)
+        return runCatching { LexicalPreservingPrinter.print(compilationUnit) }
+            .getOrElse { compilationUnit.toString() }
     }
 
     private fun applyOperation(cu: CompilationUnit, op: AgentEditOperation) {

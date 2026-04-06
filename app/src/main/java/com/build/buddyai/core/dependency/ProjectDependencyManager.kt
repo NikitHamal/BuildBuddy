@@ -275,22 +275,117 @@ class ProjectDependencyManager @Inject constructor() {
         val matches = Regex("""\b${Regex.escape(blockName)}\s*\{""").findAll(content)
         return matches.mapNotNull { match ->
             val braceIndex = match.range.last
-            var depth = 1
-            var index = braceIndex + 1
-            while (index < content.length) {
-                when (content[index]) {
-                    '{' -> depth++
-                    '}' -> {
-                        depth--
-                        if (depth == 0) {
-                            return@mapNotNull BlockRange(match.range.first, braceIndex, braceIndex + 1, index, index + 1)
-                        }
-                    }
+            val closingBrace = findMatchingBrace(content, braceIndex) ?: return@mapNotNull null
+            BlockRange(match.range.first, braceIndex, braceIndex + 1, closingBrace, closingBrace + 1)
+        }.toList()
+    }
+
+    private fun findMatchingBrace(content: String, openingBraceIndex: Int): Int? {
+        var depth = 1
+        var index = openingBraceIndex + 1
+        var inLineComment = false
+        var inBlockComment = false
+        var inSingleQuote = false
+        var inDoubleQuote = false
+        var inTripleSingleQuote = false
+        var inTripleDoubleQuote = false
+        var escaped = false
+
+        while (index < content.length) {
+            val ch = content[index]
+            val next = content.getOrNull(index + 1)
+            val next2 = content.getOrNull(index + 2)
+
+            if (inLineComment) {
+                if (ch == '\n') inLineComment = false
+                index++
+                continue
+            }
+            if (inBlockComment) {
+                if (ch == '*' && next == '/') {
+                    inBlockComment = false
+                    index += 2
+                    continue
                 }
                 index++
+                continue
             }
-            null
-        }.toList()
+            if (inTripleDoubleQuote) {
+                if (ch == '"' && next == '"' && next2 == '"') {
+                    inTripleDoubleQuote = false
+                    index += 3
+                    continue
+                }
+                index++
+                continue
+            }
+            if (inTripleSingleQuote) {
+                if (ch == '\'' && next == '\'' && next2 == '\'') {
+                    inTripleSingleQuote = false
+                    index += 3
+                    continue
+                }
+                index++
+                continue
+            }
+            if (inDoubleQuote) {
+                if (ch == '"' && !escaped) {
+                    inDoubleQuote = false
+                }
+                escaped = ch == '\\' && !escaped
+                index++
+                continue
+            }
+            if (inSingleQuote) {
+                if (ch == '\'' && !escaped) {
+                    inSingleQuote = false
+                }
+                escaped = ch == '\\' && !escaped
+                index++
+                continue
+            }
+
+            escaped = false
+            when {
+                ch == '/' && next == '/' -> {
+                    inLineComment = true
+                    index += 2
+                    continue
+                }
+                ch == '/' && next == '*' -> {
+                    inBlockComment = true
+                    index += 2
+                    continue
+                }
+                ch == '"' && next == '"' && next2 == '"' -> {
+                    inTripleDoubleQuote = true
+                    index += 3
+                    continue
+                }
+                ch == '\'' && next == '\'' && next2 == '\'' -> {
+                    inTripleSingleQuote = true
+                    index += 3
+                    continue
+                }
+                ch == '"' -> {
+                    inDoubleQuote = true
+                    index++
+                    continue
+                }
+                ch == '\'' -> {
+                    inSingleQuote = true
+                    index++
+                    continue
+                }
+                ch == '{' -> depth++
+                ch == '}' -> {
+                    depth--
+                    if (depth == 0) return index
+                }
+            }
+            index++
+        }
+        return null
     }
 
     private fun disableDependencyLine(line: String): String {

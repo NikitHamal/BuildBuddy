@@ -121,12 +121,14 @@ class ProjectDiagnosticsEngine @Inject constructor(
 
     private fun collectXmlWellFormedness(projectDir: File, problems: MutableList<BuildProblem>) {
         val factory = DocumentBuilderFactory.newInstance()
+        val builder = runCatching { factory.newDocumentBuilder() }.getOrNull()
+            ?: return
         projectDir.walkTopDown()
             .filter { it.isFile && it.extension.equals("xml", ignoreCase = true) }
             .filterNot { isIgnored(projectDir, it) }
             .forEach { file ->
                 runCatching {
-                    factory.newDocumentBuilder().parse(file)
+                    builder.parse(file)
                 }.onFailure { error ->
                     problems += BuildProblem(
                         severity = ProblemSeverity.WARNING,

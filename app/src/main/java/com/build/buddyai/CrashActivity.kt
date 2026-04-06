@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.build.buddyai.core.designsystem.theme.*
+import org.json.JSONObject
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.text.SimpleDateFormat
@@ -125,21 +126,68 @@ $stackTrace
     }
 
     fun toJson(): String {
-        return "$timestamp|$thread|$exception|$message|${stackTrace.replace("|", "\\|")}|$deviceInfo|$appVersion"
+        return JSONObject()
+            .put("timestamp", timestamp)
+            .put("thread", thread)
+            .put("exception", exception)
+            .put("message", message)
+            .put("stackTrace", stackTrace)
+            .put("deviceInfo", deviceInfo)
+            .put("appVersion", appVersion)
+            .toString()
     }
 
     companion object {
         fun fromJson(json: String): CrashReport {
-            val parts = json.split("|", limit = 7)
-            return CrashReport(
-                timestamp = parts[0].toLong(),
-                thread = parts[1],
-                exception = parts[2],
-                message = parts[3],
-                stackTrace = parts[4].replace("\\|", "|"),
-                deviceInfo = parts[5],
-                appVersion = parts[6]
+            return parseJsonPayload(json) ?: parseLegacyPayload(json)
+        }
+
+        private fun parseJsonPayload(payload: String): CrashReport? = runCatching {
+            val objectPayload = JSONObject(payload)
+            CrashReport(
+                timestamp = objectPayload.optLong("timestamp", System.currentTimeMillis()),
+                thread = objectPayload.optString("thread", "unknown"),
+                exception = objectPayload.optString("exception", "UnknownException"),
+                message = objectPayload.optString("message", "No message"),
+                stackTrace = objectPayload.optString("stackTrace", payload),
+                deviceInfo = objectPayload.optString("deviceInfo", "Unknown"),
+                appVersion = objectPayload.optString("appVersion", "Unknown")
             )
+        }.getOrNull()
+
+        private fun parseLegacyPayload(payload: String): CrashReport {
+            val parts = splitLegacyPayload(payload)
+            return CrashReport(
+                timestamp = parts.getOrNull(0)?.toLongOrNull() ?: System.currentTimeMillis(),
+                thread = parts.getOrNull(1).orEmpty().ifBlank { "unknown" },
+                exception = parts.getOrNull(2).orEmpty().ifBlank { "UnknownException" },
+                message = parts.getOrNull(3).orEmpty().ifBlank { "No message" },
+                stackTrace = parts.getOrNull(4).orEmpty().ifBlank { payload },
+                deviceInfo = parts.getOrNull(5).orEmpty().ifBlank { "Unknown" },
+                appVersion = parts.getOrNull(6).orEmpty().ifBlank { "Unknown" }
+            )
+        }
+
+        private fun splitLegacyPayload(payload: String): List<String> {
+            val output = mutableListOf<String>()
+            val current = StringBuilder()
+            var escaped = false
+            payload.forEach { char ->
+                when {
+                    escaped -> {
+                        current.append(char)
+                        escaped = false
+                    }
+                    char == '\\' -> escaped = true
+                    char == '|' && output.size < 6 -> {
+                        output += current.toString()
+                        current.clear()
+                    }
+                    else -> current.append(char)
+                }
+            }
+            output += current.toString()
+            return output
         }
     }
 }

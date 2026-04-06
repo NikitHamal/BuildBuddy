@@ -8,8 +8,10 @@ import com.build.buddyai.core.model.AgentAutonomyMode
 import com.build.buddyai.core.model.AppSettings
 import com.build.buddyai.core.model.ThemeMode
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,9 +36,17 @@ class SettingsDataStore @Inject constructor(
         val DEFAULT_MODEL_ID = stringPreferencesKey("default_model_id")
     }
 
-    val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
+    val settings: Flow<AppSettings> = context.dataStore.data
+        .catch { error ->
+            if (error is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw error
+            }
+        }
+        .map { prefs ->
         AppSettings(
-            theme = prefs[Keys.THEME]?.let { ThemeMode.valueOf(it) } ?: ThemeMode.SYSTEM,
+            theme = prefs[Keys.THEME]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.SYSTEM,
             editorFontSize = prefs[Keys.EDITOR_FONT_SIZE] ?: 14,
             editorTabWidth = prefs[Keys.EDITOR_TAB_WIDTH] ?: 4,
             editorSoftWrap = prefs[Keys.EDITOR_SOFT_WRAP] ?: true,
@@ -44,7 +54,7 @@ class SettingsDataStore @Inject constructor(
             editorAutosave = prefs[Keys.EDITOR_AUTOSAVE] ?: true,
             buildNotifications = prefs[Keys.BUILD_NOTIFICATIONS] ?: true,
             buildCacheEnabled = prefs[Keys.BUILD_CACHE_ENABLED] ?: true,
-            autonomyMode = prefs[Keys.AUTONOMY_MODE]?.let { AgentAutonomyMode.valueOf(it) } ?: AgentAutonomyMode.AUTONOMOUS_SAFE,
+            autonomyMode = prefs[Keys.AUTONOMY_MODE]?.let { runCatching { AgentAutonomyMode.valueOf(it) }.getOrNull() } ?: AgentAutonomyMode.AUTONOMOUS_SAFE,
             onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: false,
             defaultProviderId = prefs[Keys.DEFAULT_PROVIDER_ID],
             defaultModelId = prefs[Keys.DEFAULT_MODEL_ID]

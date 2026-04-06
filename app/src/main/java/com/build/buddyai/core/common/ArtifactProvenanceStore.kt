@@ -6,9 +6,9 @@ import com.build.buddyai.core.model.BuildProfile
 import com.build.buddyai.core.model.BuildRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -21,7 +21,7 @@ class ArtifactProvenanceStore @Inject constructor(
     fun save(record: ArtifactProvenance) {
         file(record.artifactId).apply {
             parentFile?.mkdirs()
-            writeText(json.encodeToString<ArtifactProvenance>(record))
+            writeText(json.encodeToString(record))
         }
     }
 
@@ -53,6 +53,10 @@ data class ArtifactProvenance(
     val buildRecordSummary: String
 ) {
     companion object {
+        private const val MAX_PLACEHOLDERS = 24
+        private const val MAX_PLACEHOLDER_KEY_LENGTH = 64
+        private const val MAX_PLACEHOLDER_VALUE_LENGTH = 256
+
         fun from(
             artifactId: String,
             artifactPath: String,
@@ -74,7 +78,7 @@ data class ArtifactProvenance(
             artifactPath = artifactPath,
             artifactName = File(artifactPath).name,
             createdAt = buildRecord.completedAt ?: System.currentTimeMillis(),
-            buildProfile = buildProfile,
+            buildProfile = compactBuildProfile(buildProfile),
             changeSetIds = changeSetIds,
             signerAlias = buildProfile.signing?.keyAlias?.takeIf { it.isNotBlank() },
             warnings = warnings,
@@ -82,7 +86,34 @@ data class ArtifactProvenance(
             timeline = timeline,
             templateOrigin = templateOrigin,
             validationSummary = validationSummary,
-            buildRecordSummary = listOfNotNull(buildRecord.status.displayName, buildRecord.buildVariant, buildRecord.errorSummary).joinToString(" • ")
+            buildRecordSummary = listOfNotNull(
+                buildRecord.status.displayName,
+                buildRecord.buildVariant,
+                buildRecord.errorSummary
+            ).joinToString(" | ")
         )
+
+        private fun compactBuildProfile(profile: BuildProfile): BuildProfile {
+            val compactPlaceholders = profile.manifestPlaceholders
+                .entries
+                .sortedBy { it.key }
+                .take(MAX_PLACEHOLDERS)
+                .associate { entry ->
+                    entry.key.take(MAX_PLACEHOLDER_KEY_LENGTH) to entry.value.take(MAX_PLACEHOLDER_VALUE_LENGTH)
+                }
+
+            return profile.copy(
+                flavorName = profile.flavorName.take(40),
+                applicationIdSuffix = profile.applicationIdSuffix.take(80),
+                versionNameSuffix = profile.versionNameSuffix.take(80),
+                versionNameOverride = profile.versionNameOverride?.take(80),
+                signing = profile.signing?.copy(
+                    keystoreFileName = profile.signing.keystoreFileName.take(120),
+                    keystorePath = profile.signing.keystorePath.substringAfterLast(File.separatorChar),
+                    keyAlias = profile.signing.keyAlias.take(80)
+                ),
+                manifestPlaceholders = compactPlaceholders
+            )
+        }
     }
 }

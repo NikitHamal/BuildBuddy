@@ -532,6 +532,7 @@ class GenerateProjectFilesUseCase @Inject constructor(
         """.trimIndent()
 
     private fun generateGradleFiles(dir: File, project: Project) {
+        val pluginVersions = resolvePluginVersions()
         File(dir, "settings.gradle.kts").writeText(
             """
             pluginManagement {
@@ -557,9 +558,9 @@ class GenerateProjectFilesUseCase @Inject constructor(
         File(dir, "build.gradle.kts").writeText(
             buildString {
                 appendLine("plugins {")
-                appendLine("    id(\"com.android.application\") version \"8.7.3\" apply false")
-                appendLine("    id(\"org.jetbrains.kotlin.android\") version \"2.1.0\" apply false")
-                if (isCompose) appendLine("    id(\"org.jetbrains.kotlin.plugin.compose\") version \"2.1.0\" apply false")
+                appendLine("    id(\"com.android.application\") version \"${pluginVersions.agp}\" apply false")
+                appendLine("    id(\"org.jetbrains.kotlin.android\") version \"${pluginVersions.kotlin}\" apply false")
+                if (isCompose) appendLine("    id(\"org.jetbrains.kotlin.plugin.compose\") version \"${pluginVersions.kotlin}\" apply false")
                 appendLine("}")
             }
         )
@@ -626,6 +627,26 @@ class GenerateProjectFilesUseCase @Inject constructor(
             writeText(appBuildGradle)
         }
     }
+
+    private fun resolvePluginVersions(): PluginVersions {
+        val fallback = PluginVersions(agp = "8.7.3", kotlin = "2.1.0")
+        val text = runCatching {
+            context.assets.open("gradle_wrapper/gradle/libs.versions.toml")
+                .bufferedReader()
+                .use { it.readText() }
+        }.getOrElse { return fallback }
+        val agp = Regex("(?m)^\\s*agp\\s*=\\s*\"([^\"]+)\"").find(text)?.groupValues?.getOrNull(1)
+        val kotlin = Regex("(?m)^\\s*kotlin\\s*=\\s*\"([^\"]+)\"").find(text)?.groupValues?.getOrNull(1)
+        return PluginVersions(
+            agp = agp?.takeIf { it.isNotBlank() } ?: fallback.agp,
+            kotlin = kotlin?.takeIf { it.isNotBlank() } ?: fallback.kotlin
+        )
+    }
+
+    private data class PluginVersions(
+        val agp: String,
+        val kotlin: String
+    )
 
     private fun generateManifest(dir: File, project: Project, activityName: String) {
         val manifestDir = File(dir, "app/src/main").apply { mkdirs() }
