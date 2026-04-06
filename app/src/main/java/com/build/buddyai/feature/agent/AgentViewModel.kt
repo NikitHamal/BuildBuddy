@@ -85,6 +85,7 @@ data class AgentUiState(
     val supportsImageAttachments: Boolean = false,
     val autonomyMode: AgentAutonomyMode = AgentAutonomyMode.AUTONOMOUS_SAFE,
     val currentActions: List<AgentAction> = emptyList(),
+    val executionTimeline: List<AgentExecutionEvent> = emptyList(),
     val currentPlanGoal: String? = null,
     val currentPlanSteps: List<String> = emptyList(),
     val lastBuildStatus: BuildStatus? = null,
@@ -94,6 +95,15 @@ data class AgentUiState(
     val problems: List<BuildProblem> = emptyList(),
     val pendingReview: PendingAgentReview? = null,
     val allProviders: List<com.build.buddyai.core.model.AiProvider> = emptyList()
+)
+
+data class AgentExecutionEvent(
+    val id: String,
+    val type: AgentActionType,
+    val status: ActionStatus,
+    val title: String,
+    val details: String? = null,
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 data class ReviewHunkPreview(
@@ -151,6 +161,8 @@ class AgentViewModel @Inject constructor(
         private const val MAX_HISTORY_MESSAGES = 60
         private const val MAX_SUMMARY_LINES = 24
         private const val MAX_DIFF_PREVIEW_LINES = 90
+        private const val MAX_EXECUTION_EVENTS = 220
+        private const val MAX_PATCH_BATCH_SIZE = 10
     }
 
     private val _uiState = MutableStateFlow(AgentUiState())
@@ -359,6 +371,7 @@ class AgentViewModel @Inject constructor(
                     attachedFiles = emptyList(),
                     isStreaming = true,
                     recentDiffs = emptyList(),
+                    executionTimeline = emptyList(),
                     lastBuildStatus = null,
                     lastBuildSummary = null,
                     integrityWarnings = emptyList(),
@@ -385,6 +398,12 @@ class AgentViewModel @Inject constructor(
                 )
             )
             agentTurnWorkScheduler.scheduleWatchdog(executionId)
+            appendExecutionEvent(
+                type = AgentActionType.PLANNING,
+                status = ActionStatus.IN_PROGRESS,
+                title = "Turn started",
+                details = "Preparing context and plan."
+            )
 
             streamJob?.cancel()
             startAgentForeground(sessionId, "Planning and analyzing request...")
@@ -422,6 +441,11 @@ class AgentViewModel @Inject constructor(
                 status = AgentTurnExecutionStatus.RUNNING,
                 owner = owner
             )
+            appendExecutionEvent(
+                type = AgentActionType.SEARCHING,
+                status = ActionStatus.IN_PROGRESS,
+                title = "Assembling project context"
+            )
             val provider = providerRepository.getDefaultProvider() ?: return finishWithError(sessionId, "No AI provider configured")
             val apiKey = providerRepository.getApiKey(provider.id) ?: return finishWithError(sessionId, "Missing API key")
             val modelId = provider.selectedModelId ?: provider.models.firstOrNull()?.id ?: return finishWithError(sessionId, "No model selected")
@@ -429,7 +453,7 @@ class AgentViewModel @Inject constructor(
             val project = currentProject() ?: return finishWithError(sessionId, "Project not found")
             val projectDir = File(project.projectPath)
             currentProjectName = project.name
-            updateAgentForeground(sessionId, "Using ${provider.name} • ${modelId}")
+            updateAgentForeground(sessionId, "Using ${provider.name} | ${modelId}")
             val contextSnapshot = contextAssembler.assemble(
                 projectId = project.id,
                 projectDir = projectDir,
@@ -438,6 +462,12 @@ class AgentViewModel @Inject constructor(
                 buildHistory = buildRepository.getBuildRecordsByProjectNow(project.id).take(8),
                 memoryContext = buildMemoryContext(project, visibleUserInput),
                 maxChars = dynamicContextBudget(modelId, modelContextWindow)
+            )
+            appendExecutionEvent(
+                type = AgentActionType.SEARCHING,
+                status = ActionStatus.COMPLETED,
+                title = "Context assembled",
+                details = "Collected ${contextSnapshot.includedFiles.size} file(s) for context."
             )
             val plan = requestExecutionPlan(
                 providerType = provider.type,
@@ -450,7 +480,13 @@ class AgentViewModel @Inject constructor(
             )
             applyPlanUi(plan)
             checkpointExecution(executionId = executionId, phase = AgentTurnExecutionPhase.PLANNING)
-            toolMemoryStore.record(project.id, "planner", plan?.steps?.joinToString(" • ") ?: "No explicit plan returned", plan?.readFiles.orEmpty())
+            appendExecutionEvent(
+                type = AgentActionType.PLANNING,
+                status = ActionStatus.COMPLETED,
+                title = "Plan ready",
+                details = plan?.steps?.joinToString(" -> ")?.take(220) ?: "No explicit steps returned."
+            )
+            toolMemoryStore.record(project.id, "planner", plan?.steps?.joinToString(" | ") ?: "No explicit plan returned", plan?.readFiles.orEmpty())
 
             setActions(
                 action(AgentActionType.READING_FILE, if (repairContext == null) "Using symbol index + local memory to scope the task" else "Reviewing failure memory and repair context"),
@@ -523,6 +559,12 @@ class AgentViewModel @Inject constructor(
             )
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
+            appendExecutionEvent(
+                type = AgentActionType.ANALYZING_LOGS,
+                status = ActionStatus.FAILED,
+                title = "Turn failed",
+                details = e.toAgentFailureMessage()
+            )
             agentTurnExecutionRepository.markFailed(executionId, e.toAgentFailureMessage())
             finishWithError(sessionId, e.toAgentFailureMessage())
         }
@@ -618,6 +660,11 @@ class AgentViewModel @Inject constructor(
     ): String {
         val contentBuilder = StringBuilder()
         var lastCheckpointAt = 0L
+        appendExecutionEvent(
+            type = AgentActionType.EXPLAINING,
+            status = ActionStatus.IN_PROGRESS,
+            title = "Streaming model output"
+        )
         streamingService.streamMessage(
             providerType = providerType,
             apiKey = apiKey,
@@ -651,6 +698,12 @@ class AgentViewModel @Inject constructor(
             }
         }
         val raw = contentBuilder.toString().trim()
+        appendExecutionEvent(
+            type = AgentActionType.EXPLAINING,
+            status = ActionStatus.COMPLETED,
+            title = "Stream completed",
+            details = if (raw.isBlank()) "Model returned an empty response." else "${raw.length} characters received."
+        )
         checkpointExecution(
             executionId = executionId,
             phase = AgentTurnExecutionPhase.STREAMING,
@@ -676,6 +729,12 @@ class AgentViewModel @Inject constructor(
         project: com.build.buddyai.core.model.Project
     ) {
         val parsed = AgentTaskProtocol.parse(rawContent)
+        appendExecutionEvent(
+            type = AgentActionType.VERIFYING,
+            status = ActionStatus.COMPLETED,
+            title = "Parsed assistant response",
+            details = "${parsed.writes.size} write(s), ${parsed.operations.size} operation(s), ${parsed.deletes.size} delete(s)."
+        )
         val finalMessage = placeholder.copy(content = parsed.displayMessage, status = MessageStatus.COMPLETE, modelId = modelId)
         chatRepository.insertMessage(finalMessage)
         _uiState.update { state ->
@@ -694,6 +753,12 @@ class AgentViewModel @Inject constructor(
 
         if (!parsed.isTask) {
             clearActions()
+            appendExecutionEvent(
+                type = AgentActionType.EXPLAINING,
+                status = ActionStatus.COMPLETED,
+                title = "Response delivered",
+                details = "No file changes were requested."
+            )
             notifyAgentOutcome(success = true, detail = "Assistant response is ready.")
             agentTurnExecutionRepository.markCompleted(executionId, parsed.displayMessage, rawContent)
             agentTurnWorkScheduler.cancel(executionId)
@@ -726,6 +791,12 @@ class AgentViewModel @Inject constructor(
                 action(AgentActionType.PLANNING, "Prepared a staged patch for review", ActionStatus.COMPLETED),
                 action(AgentActionType.EDITING_FILE, "Waiting for review approval", ActionStatus.IN_PROGRESS)
             )
+            appendExecutionEvent(
+                type = AgentActionType.EDITING_FILE,
+                status = ActionStatus.IN_PROGRESS,
+                title = "Waiting for manual review",
+                details = decision.reasons.joinToString(" | ").take(240)
+            )
             notifyAgentOutcome(success = false, detail = "Review approval required before applying staged changes.")
             agentTurnExecutionRepository.markWaitingReview(executionId, parsed.displayMessage, rawContent)
             agentTurnWorkScheduler.cancel(executionId)
@@ -750,6 +821,12 @@ class AgentViewModel @Inject constructor(
         val pending = _uiState.value.pendingReview ?: return
         viewModelScope.launch {
             val project = currentProject() ?: return@launch
+            appendExecutionEvent(
+                type = AgentActionType.EDITING_FILE,
+                status = ActionStatus.IN_PROGRESS,
+                title = "Review approved",
+                details = "Applying accepted hunks."
+            )
             val executionId = pending.executionId
             val owner = executionOwner ?: "vm:${UUID.randomUUID()}"
             if (executionId != null) {
@@ -784,6 +861,12 @@ class AgentViewModel @Inject constructor(
         val executionId = _uiState.value.pendingReview?.executionId
         _uiState.update { it.copy(pendingReview = null) }
         clearActions()
+        appendExecutionEvent(
+            type = AgentActionType.EDITING_FILE,
+            status = ActionStatus.FAILED,
+            title = "Review rejected",
+            details = "No staged changes were applied."
+        )
         if (executionId != null) {
             viewModelScope.launch {
                 agentTurnExecutionRepository.markCancelled(executionId, "Review rejected by user")
@@ -856,7 +939,7 @@ class AgentViewModel @Inject constructor(
                         title = "${operation.kind} on ${operation.path}",
                         preview = listOf(operation.target, operation.payload)
                             .filter { it.isNotBlank() }
-                            .joinToString("\n→ ")
+                            .joinToString("\n-> ")
                             .take(600)
                     )
                 )
@@ -943,19 +1026,52 @@ class AgentViewModel @Inject constructor(
                 action(AgentActionType.EDITING_FILE, "Applying planned changes"),
                 action(AgentActionType.VERIFYING, if (parsed.shouldBuild) "Running integrity and build validation" else "Running integrity validation")
             )
-
-            val applied = changeSetManager.apply(
-                projectId = project.id,
-                projectDir = projectDir,
-                summary = parsed.displayMessage,
-                writes = parsed.writes,
-                deletes = parsed.deletes,
-                operations = parsed.operations
-            )
-            val diffs = applied.diffs
+            val batches = buildChangeBatches(parsed)
+            val diffs = mutableMapOf<String, FileDiff>()
+            if (batches.isEmpty()) {
+                appendExecutionEvent(
+                    type = AgentActionType.EDITING_FILE,
+                    status = ActionStatus.COMPLETED,
+                    title = "No file edits returned",
+                    details = "Continuing directly to validation."
+                )
+            } else {
+                batches.forEachIndexed { index, batch ->
+                    val batchLabel = "Batch ${index + 1}/${batches.size}"
+                    setActions(
+                        action(AgentActionType.EDITING_FILE, "Applying $batchLabel"),
+                        action(
+                            AgentActionType.VERIFYING,
+                            if (parsed.shouldBuild) "Running integrity and build validation" else "Running integrity validation"
+                        )
+                    )
+                    appendExecutionEvent(
+                        type = AgentActionType.EDITING_FILE,
+                        status = ActionStatus.IN_PROGRESS,
+                        title = "Applying $batchLabel",
+                        details = batch.describe()
+                    )
+                    val applied = changeSetManager.apply(
+                        projectId = project.id,
+                        projectDir = projectDir,
+                        summary = if (batches.size == 1) parsed.displayMessage else "${parsed.displayMessage} [$batchLabel]",
+                        writes = batch.writes,
+                        deletes = batch.deletes,
+                        operations = batch.operations
+                    )
+                    mergeBatchDiffs(diffs, applied.diffs)
+                    appendExecutionEvent(
+                        type = AgentActionType.EDITING_FILE,
+                        status = ActionStatus.COMPLETED,
+                        title = "Applied $batchLabel",
+                        details = "${applied.diffs.size} file(s) touched."
+                    )
+                }
+            }
+            val mergedDiffs = diffs.values.sortedBy { it.filePath }
             refreshChangeSets()
-            _uiState.update { it.copy(recentDiffs = diffs, pendingReview = null) }
-            toolMemoryStore.record(project.id, "executor", parsed.displayMessage, diffs.map { it.filePath })
+            _uiState.update { it.copy(recentDiffs = mergedDiffs, pendingReview = null) }
+            toolMemoryStore.record(project.id, "executor", parsed.displayMessage, mergedDiffs.map { it.filePath })
 
             val integrity = integrityChecker.validate(project, projectDir)
             val integrityProblems = integrity.errors.map { BuildProblem(ProblemSeverity.ERROR, "Integrity error", it) } +
@@ -972,12 +1088,12 @@ class AgentViewModel @Inject constructor(
                 val signature = failureMemoryStore.recordFailure(
                     projectId = project.id,
                     contextText = integrity.summary(),
-                    editedFiles = diffs.map { it.filePath },
+                    editedFiles = mergedDiffs.map { it.filePath },
                     request = visibleUserInput,
                     memoryContext = buildMemoryContext(project, visibleUserInput)
                 )
                 setActions(
-                    action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
+                    action(AgentActionType.EDITING_FILE, "Applied ${mergedDiffs.size} file change(s)", ActionStatus.COMPLETED),
                     action(AgentActionType.VERIFYING, "Integrity validation failed", ActionStatus.FAILED)
                 )
                 if (repairAttempt < MAX_AUTOMATIC_REPAIR_PASSES) {
@@ -993,7 +1109,7 @@ class AgentViewModel @Inject constructor(
                         sessionId = sessionId,
                         visibleUserInput = visibleUserInput,
                         attachedFiles = (
-                            diffs.map { it.filePath } +
+                            mergedDiffs.map { it.filePath } +
                                 attachedFiles +
                                 inferPathsFromFailureContext(integrity.summary())
                             ).distinct(),
@@ -1025,7 +1141,7 @@ class AgentViewModel @Inject constructor(
 
             if (!parsed.shouldBuild) {
                 setActions(action(AgentActionType.VERIFYING, "Integrity validation passed", ActionStatus.COMPLETED))
-                val goalGap = detectGoalGap(visibleUserInput, diffs)
+                val goalGap = detectGoalGap(visibleUserInput, mergedDiffs)
                 if (goalGap != null && repairAttempt < MAX_AUTOMATIC_REPAIR_PASSES) {
                     val nextAttempt = repairAttempt + 1
                     val strategy = repairStrategyForAttempt(nextAttempt)
@@ -1036,7 +1152,7 @@ class AgentViewModel @Inject constructor(
                         sessionId = sessionId,
                         visibleUserInput = visibleUserInput,
                         attachedFiles = (
-                            diffs.map { it.filePath } +
+                            mergedDiffs.map { it.filePath } +
                                 attachedFiles +
                                 inferPathsFromFailureContext(goalGap)
                             ).distinct(),
@@ -1080,10 +1196,10 @@ class AgentViewModel @Inject constructor(
                 buildOutcome.failureSignature?.let { failureMemoryStore.markResolved(project.id, it, parsed.displayMessage) }
                 toolMemoryStore.record(project.id, "build", buildOutcome.summary)
                 setActions(
-                    action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
+                    action(AgentActionType.EDITING_FILE, "Applied ${mergedDiffs.size} file change(s)", ActionStatus.COMPLETED),
                     action(AgentActionType.BUILDING, buildOutcome.summary, ActionStatus.COMPLETED)
                 )
-                val goalGap = detectGoalGap(visibleUserInput, diffs)
+                val goalGap = detectGoalGap(visibleUserInput, mergedDiffs)
                 if (goalGap != null && repairAttempt < MAX_AUTOMATIC_REPAIR_PASSES) {
                     val nextAttempt = repairAttempt + 1
                     val strategy = repairStrategyForAttempt(nextAttempt)
@@ -1094,7 +1210,7 @@ class AgentViewModel @Inject constructor(
                         sessionId = sessionId,
                         visibleUserInput = visibleUserInput,
                         attachedFiles = (
-                            diffs.map { it.filePath } +
+                            mergedDiffs.map { it.filePath } +
                                 attachedFiles +
                                 inferPathsFromFailureContext(goalGap)
                             ).distinct(),
@@ -1122,12 +1238,12 @@ class AgentViewModel @Inject constructor(
             val failureSignature = failureMemoryStore.recordFailure(
                 projectId = project.id,
                 contextText = buildOutcome.failureContext ?: buildOutcome.summary,
-                editedFiles = diffs.map { it.filePath },
+                editedFiles = mergedDiffs.map { it.filePath },
                 request = visibleUserInput,
                 memoryContext = buildMemoryContext(project, visibleUserInput)
             )
             setActions(
-                action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
+                action(AgentActionType.EDITING_FILE, "Applied ${mergedDiffs.size} file change(s)", ActionStatus.COMPLETED),
                 action(AgentActionType.BUILDING, buildOutcome.summary, ActionStatus.FAILED),
                 action(AgentActionType.ANALYZING_LOGS, "Preparing automatic repair pass", ActionStatus.IN_PROGRESS)
             )
@@ -1161,7 +1277,7 @@ class AgentViewModel @Inject constructor(
                 sessionId = sessionId,
                 visibleUserInput = visibleUserInput,
                 attachedFiles = (
-                    diffs.map { it.filePath } +
+                    mergedDiffs.map { it.filePath } +
                         attachedFiles +
                         inferPathsFromFailureContext(buildOutcome.failureContext ?: buildOutcome.summary)
                     ).distinct(),
@@ -1180,6 +1296,52 @@ class AgentViewModel @Inject constructor(
                 agentTurnExecutionRepository.markFailed(effectiveExecutionId, e.toAgentFailureMessage())
             }
             finishWithError(sessionId, e.toAgentFailureMessage())
+        }
+    }
+
+    private data class ChangeBatch(
+        val writes: List<AgentFileWrite> = emptyList(),
+        val deletes: List<String> = emptyList(),
+        val operations: List<AgentEditOperation> = emptyList()
+    ) {
+        fun describe(): String = buildString {
+            if (operations.isNotEmpty()) append("${operations.size} operation(s)")
+            if (writes.isNotEmpty()) {
+                if (isNotEmpty()) append(", ")
+                append("${writes.size} write(s)")
+            }
+            if (deletes.isNotEmpty()) {
+                if (isNotEmpty()) append(", ")
+                append("${deletes.size} delete(s)")
+            }
+            if (isEmpty()) append("No changes")
+        }
+    }
+
+    private fun buildChangeBatches(parsed: ParsedAgentResponse): List<ChangeBatch> {
+        val opBatches = parsed.operations.chunked(MAX_PATCH_BATCH_SIZE).map { ChangeBatch(operations = it) }
+        val writeBatches = parsed.writes.chunked(MAX_PATCH_BATCH_SIZE).map { ChangeBatch(writes = it) }
+        val deleteBatches = parsed.deletes.chunked(MAX_PATCH_BATCH_SIZE).map { ChangeBatch(deletes = it) }
+        return opBatches + writeBatches + deleteBatches
+    }
+
+    private fun mergeBatchDiffs(
+        merged: MutableMap<String, FileDiff>,
+        incoming: List<FileDiff>
+    ) {
+        incoming.forEach { next ->
+            val current = merged[next.filePath]
+            merged[next.filePath] = if (current == null) {
+                next
+            } else {
+                next.copy(
+                    originalContent = current.originalContent,
+                    deletions = current.originalContent.lineSequence().count(),
+                    additions = next.modifiedContent.lineSequence().count().coerceAtLeast(if (next.modifiedContent.isEmpty()) 0 else 1),
+                    isNewFile = current.isNewFile,
+                    isDeleted = next.isDeleted
+                )
+            }
         }
     }
 
@@ -1271,7 +1433,7 @@ class AgentViewModel @Inject constructor(
                 }
                 BuildOutcome(
                     status = BuildStatus.SUCCESS,
-                    summary = "Validation build passed • ${File(successPath!!).name}",
+                    summary = "Validation build passed | ${File(successPath!!).name}",
                     failureContext = null,
                     problems = problems,
                     failureSignature = null
@@ -1380,6 +1542,11 @@ class AgentViewModel @Inject constructor(
             )
         }
         stopAgentForeground()
+        appendExecutionEvent(
+            type = AgentActionType.ANALYZING_LOGS,
+            status = ActionStatus.FAILED,
+            title = "Turn cancelled by user"
+        )
         notifyAgentOutcome(success = false, detail = "Agent task cancelled.")
         if (executionId != null) {
             viewModelScope.launch {
@@ -1427,6 +1594,12 @@ class AgentViewModel @Inject constructor(
                 currentActions = listOf(action(AgentActionType.ANALYZING_LOGS, message, ActionStatus.FAILED))
             )
         }
+        appendExecutionEvent(
+            type = AgentActionType.ANALYZING_LOGS,
+            status = ActionStatus.FAILED,
+            title = "Turn failed",
+            details = message
+        )
         notifyAgentOutcome(success = false, detail = message.take(180))
         stopAgentForeground()
         activeExecutionId?.let { executionId ->
@@ -1731,6 +1904,12 @@ class AgentViewModel @Inject constructor(
             activeExecutionId = execution.id
             if (execution.status == AgentTurnExecutionStatus.RUNNING.name) {
                 _uiState.update { it.copy(isStreaming = true) }
+                appendExecutionEvent(
+                    type = AgentActionType.PLANNING,
+                    status = ActionStatus.IN_PROGRESS,
+                    title = "Resuming in-flight execution",
+                    details = execution.phase
+                )
                 agentTurnWorkScheduler.scheduleWatchdog(execution.id)
                 return@launch
             }
@@ -1754,6 +1933,11 @@ class AgentViewModel @Inject constructor(
                         )
                     )
                 }
+                appendExecutionEvent(
+                    type = AgentActionType.EDITING_FILE,
+                    status = ActionStatus.IN_PROGRESS,
+                    title = "Review needed for resumed task"
+                )
                 return@launch
             }
             val readyForForegroundContinuation = execution.status == AgentTurnExecutionStatus.WAITING_REVIEW.name &&
@@ -1844,13 +2028,66 @@ class AgentViewModel @Inject constructor(
         filePath = filePath
     )
 
+    private fun appendExecutionEvent(
+        type: AgentActionType,
+        status: ActionStatus,
+        title: String,
+        details: String? = null
+    ) {
+        _uiState.update { state ->
+            val normalizedDetails = details?.trim()?.take(280)?.takeIf { it.isNotBlank() }
+            val previous = state.executionTimeline.lastOrNull()
+            val duplicate = previous != null &&
+                previous.type == type &&
+                previous.status == status &&
+                previous.title == title &&
+                previous.details == normalizedDetails
+            if (duplicate) {
+                state
+            } else {
+                state.copy(
+                    executionTimeline = (
+                        state.executionTimeline + AgentExecutionEvent(
+                            id = UUID.randomUUID().toString(),
+                            type = type,
+                            status = status,
+                            title = title,
+                            details = normalizedDetails
+                        )
+                        ).takeLast(MAX_EXECUTION_EVENTS)
+                )
+            }
+        }
+    }
+
     private fun setActions(vararg actions: AgentAction) {
-        _uiState.update { it.copy(currentActions = actions.toList()) }
+        val next = actions.toList()
+        val previous = _uiState.value.currentActions
+        _uiState.update { it.copy(currentActions = next) }
+        val previousSignatures = previous.map { "${it.type}:${it.status}:${it.description}:${it.filePath.orEmpty()}" }.toSet()
+        next.forEach { action ->
+            val signature = "${action.type}:${action.status}:${action.description}:${action.filePath.orEmpty()}"
+            val lastEvent = _uiState.value.executionTimeline.lastOrNull()
+            val isNoisyBuildProgress =
+                action.type == AgentActionType.BUILDING &&
+                    action.status == ActionStatus.IN_PROGRESS &&
+                    lastEvent?.type == AgentActionType.BUILDING &&
+                    lastEvent.status == ActionStatus.IN_PROGRESS
+            if (isNoisyBuildProgress) return@forEach
+            if (signature !in previousSignatures) {
+                appendExecutionEvent(
+                    type = action.type,
+                    status = action.status,
+                    title = action.description,
+                    details = action.filePath
+                )
+            }
+        }
         val sessionId = _uiState.value.sessionId
         if (sessionId != null && backgroundExecutionRegistry.isRunning(sessionId)) {
             updateAgentForeground(
                 sessionId = sessionId,
-                status = actions.firstOrNull()?.description?.take(100) ?: "Agent is working..."
+                status = next.firstOrNull()?.description?.take(100) ?: "Agent is working..."
             )
         }
     }

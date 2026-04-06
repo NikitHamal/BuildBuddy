@@ -100,7 +100,12 @@ fun AgentScreen(
     }
 
     LaunchedEffect(projectId) { viewModel.initialize(projectId) }
-    LaunchedEffect(uiState.messages.size, uiState.pendingReview != null) {
+    LaunchedEffect(
+        uiState.messages.size,
+        uiState.pendingReview != null,
+        uiState.executionTimeline.size,
+        uiState.currentActions.size
+    ) {
         val itemCount = uiState.messages.size + if (uiState.pendingReview != null) 1 else 0
         if (itemCount > 0) listState.animateScrollToItem(itemCount - 1)
     }
@@ -109,7 +114,7 @@ fun AgentScreen(
         topBar = {
             NvTopBar(
                 title = "AI Agent",
-                subtitle = "Plan · patch · validate",
+                subtitle = "Plan | patch | validate",
                 navigationIcon = { NvBackButton(onBack) },
                 actions = {
                     IconButton(onClick = onNavigateToModels) {
@@ -154,14 +159,12 @@ fun AgentScreen(
                         }
                     }
 
-                    if (uiState.currentActions.isNotEmpty()) {
+                    if (uiState.executionTimeline.isNotEmpty() || uiState.currentActions.isNotEmpty()) {
                         item {
-                            Card {
-                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("Execution", style = MaterialTheme.typography.titleSmall)
-                                    uiState.currentActions.forEach { action -> ActionTimelineItem(action = action) }
-                                }
-                            }
+                            ExecutionTimelineCard(
+                                events = uiState.executionTimeline,
+                                liveActions = uiState.currentActions
+                            )
                         }
                     }
 
@@ -173,7 +176,7 @@ fun AgentScreen(
                                     Text(pending.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     if (pending.reasons.isNotEmpty()) {
                                         pending.reasons.forEach { reason ->
-                                            Text("• $reason", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("- $reason", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
                                     pending.hunks.take(12).forEach { hunk ->
@@ -351,3 +354,4 @@ fun AgentScreen(
         }
     }
 }
+
