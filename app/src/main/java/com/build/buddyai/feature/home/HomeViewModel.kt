@@ -23,6 +23,13 @@ data class HomeUiState(
     val projectCount: Int = 0
 )
 
+private data class HomeBaseData(
+    val allProjects: List<Project>,
+    val recentProjects: List<Project>,
+    val recentBuilds: List<BuildRecord>,
+    val projectCount: Int
+)
+
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val projectRepository: ProjectRepository,
@@ -37,16 +44,23 @@ class HomeViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            combine(
+            val baseDataFlow = combine(
                 projectRepository.getAllProjects(),
                 projectRepository.getRecentProjects(5),
                 buildRepository.getRecentBuildRecords(5),
-                projectRepository.getProjectCount(),
-                _searchQuery,
-                _sortMode
-            ) { allProjects, recent, builds, count, query, sort ->
-                val filtered = if (query.isBlank()) allProjects
-                else allProjects.filter {
+                projectRepository.getProjectCount()
+            ) { allProjects, recent, builds, count ->
+                HomeBaseData(
+                    allProjects = allProjects,
+                    recentProjects = recent,
+                    recentBuilds = builds,
+                    projectCount = count
+                )
+            }
+
+            combine(baseDataFlow, _searchQuery, _sortMode) { base, query, sort ->
+                val filtered = if (query.isBlank()) base.allProjects
+                else base.allProjects.filter {
                     it.name.contains(query, ignoreCase = true) ||
                             it.packageName.contains(query, ignoreCase = true)
                 }
@@ -57,12 +71,12 @@ class HomeViewModel @Inject constructor(
                 }
                 HomeUiState(
                     projects = sorted,
-                    recentProjects = recent,
-                    recentBuilds = builds,
+                    recentProjects = base.recentProjects,
+                    recentBuilds = base.recentBuilds,
                     searchQuery = query,
                     sortMode = sort,
                     isLoading = false,
-                    projectCount = count
+                    projectCount = base.projectCount
                 )
             }.collect { _uiState.value = it }
         }
