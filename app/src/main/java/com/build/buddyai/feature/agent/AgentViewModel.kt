@@ -1657,6 +1657,7 @@ class AgentViewModel @Inject constructor(
             .mapNotNull { normalizePathOrNull(it) }
             .distinct()
             .take(24)
+            .toList()
     }
 
     private data class RepairStrategy(val label: String, val instructions: String)
