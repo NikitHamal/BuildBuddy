@@ -61,7 +61,10 @@ object AgentTaskProtocol {
     private val envelopeRegex = Regex("""```buildbuddy\s*(\{[\s\S]*?\})\s*```""")
     private val planRegex = Regex("""```buildbuddy-plan\s*(\{[\s\S]*?\})\s*```""")
     private val editRegex = Regex("""```buildbuddy-edit\s*(\[[\s\S]*?\])\s*```""")
-    private val filepathRegex = Regex("""```filepath:(.*?)\n([\s\S]*?)```""")
+    private val filepathRegex = Regex(
+        pattern = """(?ms)^```filepath:([^\r\n]+)\r?\n(.*?)(?:\r?\n)?```[ \t]*(?:\r?\n|$)""",
+        option = RegexOption.MULTILINE
+    )
 
     fun parse(rawContent: String): ParsedAgentResponse {
         val envelope = envelopeRegex.find(rawContent)

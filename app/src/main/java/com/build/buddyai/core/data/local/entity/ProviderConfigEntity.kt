@@ -25,7 +25,9 @@ data class ProviderConfigEntity(
         apiKeyEncrypted = apiKeyEncrypted,
         selectedModelId = selectedModelId,
         isDefault = isDefault,
-        parameters = ModelParameters(temperature = temperature, maxTokens = maxTokens, topP = topP)
+        parameters = ModelParameters(temperature = temperature, maxTokens = maxTokens, topP = topP),
+        cachedModels = cachedModels,
+        lastModelFetchTime = lastModelFetchTime
     )
 
     companion object {
@@ -37,7 +39,9 @@ data class ProviderConfigEntity(
             isDefault = config.isDefault,
             temperature = config.parameters.temperature,
             maxTokens = config.parameters.maxTokens,
-            topP = config.parameters.topP
+            topP = config.parameters.topP,
+            cachedModels = config.cachedModels,
+            lastModelFetchTime = config.lastModelFetchTime
         )
     }
 }

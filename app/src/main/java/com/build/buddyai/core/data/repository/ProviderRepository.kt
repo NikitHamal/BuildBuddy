@@ -84,7 +84,9 @@ class ProviderRepository @Inject constructor(
             isDefault = existing?.isDefault ?: false,
             temperature = existing?.temperature ?: 0.7f,
             maxTokens = existing?.maxTokens ?: 4096,
-            topP = existing?.topP ?: 0.9f
+            topP = existing?.topP ?: 0.9f,
+            cachedModels = existing?.cachedModels.orEmpty(),
+            lastModelFetchTime = existing?.lastModelFetchTime
         )
         providerConfigDao.insertProviderConfig(config)
     }

@@ -1,6 +1,5 @@
 package com.build.buddyai.core.network
 
-import android.util.Base64
 import com.build.buddyai.core.model.ProviderType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -24,7 +23,6 @@ import okhttp3.Response
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -210,32 +208,9 @@ class AiStreamingService @Inject constructor(
             .build()
     }
 
-    private fun openAiMessage(message: AiChatMessage) = buildJsonObject {
-        put("role", message.role)
-        if (message.imagePaths.isEmpty()) {
-            put("content", message.text)
-        } else {
-            putJsonArray("content") {
-                if (message.text.isNotBlank()) add(buildJsonObject {
-                    put("type", "text")
-                    put("text", message.text)
-                })
-                message.imagePaths.forEach { path ->
-                    add(buildJsonObject {
-                        put("type", "image_url")
-                        putJsonObject("image_url") { put("url", fileToDataUrl(path)) }
-                    })
-                }
-            }
-        }
-    }
+    private fun openAiMessage(message: AiChatMessage) = AiImagePayloadUtils.openAiMessage(message)
 
-    private fun geminiInlineImagePart(path: String) = buildJsonObject {
-        putJsonObject("inlineData") {
-            put("mimeType", mimeTypeFor(path))
-            put("data", Base64.encodeToString(File(path).readBytes(), Base64.NO_WRAP))
-        }
-    }
+    private fun geminiInlineImagePart(path: String) = AiImagePayloadUtils.geminiInlineImagePart(path)
 
     private fun extractChatCompletionsDelta(data: String): String? {
         val jsonData = json.parseToJsonElement(data).jsonObject
@@ -254,18 +229,6 @@ class AiStreamingService @Inject constructor(
             ?.get("parts")?.jsonArray
             ?.joinToString(separator = "") { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull.orEmpty() }
             ?.takeIf { it.isNotBlank() }
-    }
-
-    private fun fileToDataUrl(path: String): String {
-        val bytes = File(path).readBytes()
-        return "data:${mimeTypeFor(path)};base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
-    }
-
-    private fun mimeTypeFor(path: String): String = when (path.substringAfterLast('.', "").lowercase()) {
-        "jpg", "jpeg" -> "image/jpeg"
-        "png" -> "image/png"
-        "webp" -> "image/webp"
-        else -> "application/octet-stream"
     }
 
     private companion object {

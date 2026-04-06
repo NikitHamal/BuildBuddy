@@ -48,7 +48,7 @@ object OnDeviceBuildEnvironment {
             val androidJarZip = File(toolsDir, "android.jar.zip")
             androidJar = File(toolsDir, "android.jar")
             extractAsset(context, "$ASSETS_PREFIX/android.jar.zip", androidJarZip)
-            if (!androidJar.exists() || androidJar.length() == 0L) {
+            if (!androidJar.exists() || androidJar.length() == 0L || androidJarZip.lastModified() > androidJar.lastModified()) {
                 unzip(androidJarZip, toolsDir)
             }
 

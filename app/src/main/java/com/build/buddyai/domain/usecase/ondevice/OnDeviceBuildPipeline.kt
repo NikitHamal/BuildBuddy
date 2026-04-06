@@ -1,6 +1,7 @@
 package com.build.buddyai.domain.usecase.ondevice
 
 import android.content.Context
+import com.android.tools.r8.CompilationMode
 import com.build.buddyai.core.agent.ManifestPlaceholderResolver
 import com.build.buddyai.core.common.BuildProfileManager
 import com.build.buddyai.core.common.FileUtils
@@ -89,6 +90,7 @@ class OnDeviceBuildPipeline(
             androidJar = env.androidJar,
             dexOutputDir = dexOutputDir,
             minApiLevel = minSdk,
+            compilationMode = if (buildProfile.variant == com.build.buddyai.core.model.BuildVariant.RELEASE) CompilationMode.RELEASE else CompilationMode.DEBUG,
             log = onLog
         ).dex()
         onLog("DEX compilation complete")

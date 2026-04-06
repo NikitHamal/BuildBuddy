@@ -11,6 +11,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import java.io.File
+import java.security.KeyStore
+import java.security.PrivateKey
+import java.util.Locale
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -32,6 +35,7 @@ class BuildProfileManager @Inject constructor(
     }
 
     fun saveProfile(projectId: String, profile: BuildProfile, storePassword: String? = null, keyPassword: String? = null, audit: Boolean = true) {
+        validateSigningCredentials(projectId, profile, storePassword, keyPassword)
         val existingSigning = loadProfile(projectId).signing
         profileFile(projectId).apply {
             parentFile?.mkdirs()
@@ -107,6 +111,51 @@ class BuildProfileManager @Inject constructor(
     }
 
     private fun profileFile(projectId: String) = File(context.filesDir, "build_profiles/$projectId.json")
+
+    private fun validateSigningCredentials(projectId: String, profile: BuildProfile, storePassword: String?, keyPassword: String?) {
+        val signing = profile.signing ?: return
+        val hasIncomingSecrets = !storePassword.isNullOrBlank() || !keyPassword.isNullOrBlank()
+        if (!hasIncomingSecrets) return
+        val existing = getSigningSecrets(projectId)
+        val resolvedStorePassword = storePassword?.takeIf { it.isNotBlank() } ?: existing?.storePassword
+        val resolvedKeyPassword = keyPassword?.takeIf { it.isNotBlank() } ?: existing?.keyPassword
+        if (resolvedStorePassword.isNullOrBlank() || resolvedKeyPassword.isNullOrBlank()) {
+            throw IllegalArgumentException("Both store and key passwords are required for signing validation.")
+        }
+        if (signing.keystorePath.isBlank() || signing.keyAlias.isBlank()) {
+            throw IllegalArgumentException("Keystore path and key alias are required before saving signing passwords.")
+        }
+        val keystoreFile = File(signing.keystorePath)
+        require(keystoreFile.exists() && keystoreFile.isFile) { "Configured keystore file does not exist: ${keystoreFile.absolutePath}" }
+
+        val keyStore = loadKeyStore(keystoreFile, resolvedStorePassword)
+        require(keyStore.containsAlias(signing.keyAlias)) {
+            "Keystore does not contain alias '${signing.keyAlias}'."
+        }
+        val privateKey = keyStore.getKey(signing.keyAlias, resolvedKeyPassword.toCharArray()) as? PrivateKey
+        require(privateKey != null) {
+            "Unable to unlock private key for alias '${signing.keyAlias}'. Check key password."
+        }
+    }
+
+    private fun loadKeyStore(keystoreFile: File, password: String): KeyStore {
+        val candidates = when (keystoreFile.extension.lowercase(Locale.US)) {
+            "p12", "pfx" -> listOf("PKCS12", KeyStore.getDefaultType())
+            else -> listOf(KeyStore.getDefaultType(), "JKS", "PKCS12")
+        }.distinct()
+
+        var lastError: Throwable? = null
+        candidates.forEach { type ->
+            try {
+                return KeyStore.getInstance(type).apply {
+                    keystoreFile.inputStream().use { load(it, password.toCharArray()) }
+                }
+            } catch (t: Throwable) {
+                lastError = t
+            }
+        }
+        throw IllegalArgumentException("Unable to open keystore '${keystoreFile.name}': ${lastError?.message}", lastError)
+    }
 
     @Serializable
     private data class StoredProfile(

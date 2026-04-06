@@ -62,7 +62,24 @@ class AppDataManager @Inject constructor(
         val projectIds = projectDao.getAllProjectsNow().map { it.id }
         if (DataScope.PROJECTS in scopes) {
             File(context.filesDir, "projects").deleteRecursively()
+            File(context.filesDir, "builds").deleteRecursively()
+            File(context.filesDir, "project_problems").deleteRecursively()
+            File(context.filesDir, "artifacts").deleteRecursively()
+            File(context.filesDir, "artifact_provenance").deleteRecursively()
+            File(context.filesDir, "snapshots").deleteRecursively()
+            File(context.filesDir, "chat_attachments").deleteRecursively()
+            File(context.filesDir, "agent_change_sets").deleteRecursively()
+            File(context.filesDir, "signing").deleteRecursively()
+            File(context.filesDir, "build_profiles").deleteRecursively()
             projectDao.clearAllProjects()
+            buildRecordDao.clearAllRecords()
+            artifactDao.clearAllArtifacts()
+            chatDao.clearAllMessages()
+            chatDao.clearAllSessions()
+            projectIds.forEach { projectId ->
+                secureKeyStore.deleteApiKey("sign_store_$projectId")
+                secureKeyStore.deleteApiKey("sign_key_$projectId")
+            }
         }
         if (DataScope.BUILDS in scopes) {
             File(context.filesDir, "builds").deleteRecursively()

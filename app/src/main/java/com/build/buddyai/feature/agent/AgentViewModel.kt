@@ -38,6 +38,7 @@ import com.build.buddyai.core.model.BuildStatus
 import com.build.buddyai.core.model.ChatMessage
 import com.build.buddyai.core.model.ChatSession
 import com.build.buddyai.core.model.FileDiff
+import com.build.buddyai.core.model.ModelMetadataRegistry
 import com.build.buddyai.core.model.MessageRole
 import com.build.buddyai.core.model.MessageStatus
 import com.build.buddyai.core.model.ProblemSeverity
@@ -359,6 +360,7 @@ class AgentViewModel @Inject constructor(
             val provider = providerRepository.getDefaultProvider() ?: return finishWithError(sessionId, "No AI provider configured")
             val apiKey = providerRepository.getApiKey(provider.id) ?: return finishWithError(sessionId, "Missing API key")
             val modelId = provider.selectedModelId ?: provider.models.firstOrNull()?.id ?: return finishWithError(sessionId, "No model selected")
+            val modelContextWindow = provider.models.firstOrNull { it.id == modelId }?.contextWindow
             val project = currentProject() ?: return finishWithError(sessionId, "Project not found")
             val projectDir = File(project.projectPath)
             val contextSnapshot = contextAssembler.assemble(
@@ -367,7 +369,8 @@ class AgentViewModel @Inject constructor(
                 attachedFiles = attachedFiles,
                 focusHint = visibleUserInput,
                 buildHistory = buildRepository.getBuildRecordsByProjectNow(project.id).take(8),
-                memoryContext = buildMemoryContext(project, visibleUserInput)
+                memoryContext = buildMemoryContext(project, visibleUserInput),
+                maxChars = dynamicContextBudget(modelId, modelContextWindow)
             )
             val plan = requestExecutionPlan(
                 providerType = provider.type,
@@ -1099,6 +1102,12 @@ class AgentViewModel @Inject constructor(
                 "Agent runtime compatibility error ($detail). The operation was stopped safely. Please update to the latest app build."
             else -> detail.ifBlank { "AI task failed" }
         }
+    }
+
+    private fun dynamicContextBudget(modelId: String, liveContextWindow: Int? = null): Int {
+        val modelInfo = ModelMetadataRegistry.getModelInfo(modelId)
+        val contextWindow = liveContextWindow ?: modelInfo?.contextWindow ?: 32_768
+        return (contextWindow * 3).coerceIn(40_000, 300_000)
     }
 
     private suspend fun persistSystemMessage(sessionId: String, content: String) {

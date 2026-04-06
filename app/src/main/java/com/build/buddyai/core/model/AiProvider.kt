@@ -174,18 +174,18 @@ object ModelMetadataRegistry {
      * Returns null if the model is not in the registry.
      */
     fun getModelInfo(modelId: String): ModelInfo? {
-        // Try exact match first
-        knownModels[modelId]?.let { return it }
-        
-        // Try case-insensitive match
-        val lowerId = modelId.lowercase()
-        knownModels.entries.find { it.key.lowercase() == lowerId }?.let { return it.value }
-        
-        // Try partial match for common patterns
-        knownModels.entries.find { it.key.contains(lowerId, ignoreCase = true) || lowerId.contains(it.key, ignoreCase = true) }
-            ?.let { return it.value }
-        
-        return null
+        val normalized = modelId.trim()
+        if (normalized.isBlank()) return null
+
+        knownModels[normalized]?.let { return it }
+
+        val lowerId = normalized.lowercase()
+        knownModels.entries.firstOrNull { it.key.lowercase() == lowerId }?.let { return it.value }
+
+        // Allow suffix match only when unambiguous (avoids cross-provider collisions).
+        val suffix = lowerId.substringAfterLast('/')
+        val suffixMatches = knownModels.entries.filter { it.key.substringAfterLast('/').lowercase() == suffix }
+        return if (suffixMatches.size == 1) suffixMatches.first().value else null
     }
 }
 
@@ -203,5 +203,7 @@ data class ProviderConfig(
     val apiKeyEncrypted: String = "",
     val selectedModelId: String? = null,
     val isDefault: Boolean = false,
-    val parameters: ModelParameters = ModelParameters()
+    val parameters: ModelParameters = ModelParameters(),
+    val cachedModels: String = "",
+    val lastModelFetchTime: Long? = null
 )

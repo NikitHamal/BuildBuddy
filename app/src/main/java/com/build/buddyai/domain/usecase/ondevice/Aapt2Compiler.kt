@@ -1,6 +1,7 @@
 package com.build.buddyai.domain.usecase.ondevice
 
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 class Aapt2Compiler(
     private val aapt2: File,
@@ -64,9 +65,22 @@ class Aapt2Compiler(
 
     private fun execute(args: List<String>, tag: String) {
         log("[$tag] ${args.joinToString(" ")}")
-        val process = ProcessBuilder(args).redirectErrorStream(true).start()
-        val output = process.inputStream.bufferedReader().readText()
-        val exitCode = process.waitFor()
+        val outputFile = File(binDir, "${tag.replace(Regex("[^A-Za-z0-9._-]"), "_")}_${System.currentTimeMillis()}.log")
+        val process = ProcessBuilder(args)
+            .redirectErrorStream(true)
+            .redirectOutput(outputFile)
+            .start()
+        val finished = process.waitFor(120, TimeUnit.SECONDS)
+        if (!finished) {
+            process.destroy()
+            if (!process.waitFor(5, TimeUnit.SECONDS)) process.destroyForcibly()
+            val timeoutOutput = runCatching { outputFile.readText() }.getOrDefault("")
+            outputFile.delete()
+            throw RuntimeException("$tag timed out after 120s.\n$timeoutOutput")
+        }
+        val output = runCatching { outputFile.readText() }.getOrDefault("")
+        outputFile.delete()
+        val exitCode = process.exitValue()
         if (output.isNotBlank()) log("[$tag] $output")
         if (exitCode != 0) throw RuntimeException("$tag failed (exit $exitCode):\n$output")
     }

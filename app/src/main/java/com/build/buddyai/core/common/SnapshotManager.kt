@@ -46,10 +46,30 @@ class SnapshotManager @Inject constructor(
             "Snapshot path is outside the project snapshot directory"
         }
         require(snapshotFile.exists() && snapshotFile.isFile) { "Snapshot file not found" }
+        val parentDir = projectDir.parentFile?.canonicalFile
+            ?: throw IllegalStateException("Project directory has no parent: ${projectDir.absolutePath}")
+        parentDir.mkdirs()
 
-        projectDir.deleteRecursively()
-        projectDir.mkdirs()
-        FileUtils.unzipToDirectory(snapshotFile, projectDir)
+        val restoreId = System.currentTimeMillis()
+        val tempDir = File(parentDir, "${projectDir.name}.restore_$restoreId").canonicalFile
+        val backupDir = File(parentDir, "${projectDir.name}.backup_$restoreId").canonicalFile
+
+        tempDir.deleteRecursively()
+        backupDir.deleteRecursively()
+        FileUtils.unzipToDirectory(snapshotFile, tempDir)
+
+        val hadProject = projectDir.exists()
+        if (hadProject && !projectDir.renameTo(backupDir)) {
+            tempDir.deleteRecursively()
+            throw IllegalStateException("Unable to create project backup before restore")
+        }
+        if (projectDir.exists()) projectDir.deleteRecursively()
+        if (!tempDir.renameTo(projectDir)) {
+            if (projectDir.exists()) projectDir.deleteRecursively()
+            if (hadProject) backupDir.renameTo(projectDir)
+            throw IllegalStateException("Failed to activate restored snapshot")
+        }
+        backupDir.deleteRecursively()
     }
 
     fun deleteSnapshot(snapshotPath: String) {

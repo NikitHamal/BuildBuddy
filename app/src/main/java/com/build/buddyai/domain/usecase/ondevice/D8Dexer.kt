@@ -10,9 +10,9 @@ import java.nio.file.Paths
 /**
  * Stage 3: Convert .class files to DEX using D8 (from the R8 library).
  *
- * D8 runs **in-process** on ART. Same approach as Sketchware Pro's DexCompiler.
+ * D8 runs in-process on ART. Same approach as Sketchware Pro's DexCompiler.
  *
- * Supports multi-dex for larger apps: outputs `classes.dex`, `classes2.dex`, etc.
+ * Supports multi-dex for larger apps: outputs classes.dex, classes2.dex, etc.
  *
  * Outputs DEX files to [dexOutputDir].
  */
@@ -21,6 +21,7 @@ class D8Dexer(
     private val androidJar: File,
     private val dexOutputDir: File,
     private val minApiLevel: Int = 21,
+    private val compilationMode: CompilationMode = CompilationMode.DEBUG,
     private val log: (String) -> Unit = {}
 ) {
     fun dex() {
@@ -37,28 +38,22 @@ class D8Dexer(
             return
         }
 
-        log("[D8] DEXing ${classFiles.size} class files (minApi=$minApiLevel, multi-dex enabled)…")
+        log("[D8] DEXing ${classFiles.size} class files (minApi=$minApiLevel, mode=${compilationMode.name}, multi-dex enabled)...")
 
-        // Configure D8 with multi-dex support
         val builder = D8Command.builder()
-            .setMode(CompilationMode.DEBUG)
+            .setMode(compilationMode)
             .setMinApiLevel(minApiLevel)
             .addLibraryFiles(Paths.get(androidJar.absolutePath))
             .setOutput(dexOutputDir.toPath(), OutputMode.DexIndexed)
             .addProgramFiles(classFiles)
 
-        // Enable multi-dex (required for apps exceeding 64K method reference limit)
-        // D8 will automatically split into classes.dex, classes2.dex, etc. if needed
-        // For DEBUG mode, multi-dex is implicit; for RELEASE, you'd set it explicitly
-        
         D8.run(builder.build())
 
-        // Verify at least one DEX file was produced
         val dexFiles = dexOutputDir.listFiles()?.filter { it.isFile && it.extension == "dex" } ?: emptyList()
         if (dexFiles.isEmpty()) {
             throw RuntimeException("D8 completed but no DEX files were produced")
         }
-        
+
         log("[D8] DEX compilation complete: ${dexFiles.size} file(s)")
         dexFiles.forEach { dexFile ->
             log("[D8]   ${dexFile.name} (${dexFile.length()} bytes)")

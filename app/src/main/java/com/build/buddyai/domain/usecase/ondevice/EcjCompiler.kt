@@ -86,44 +86,46 @@ class EcjCompiler(
             override fun write(b: Int) = errBuf.append(b.toChar()).let {}
         }
 
-        // Set system properties that ECJ's resource bundles expect (prevents NPE on Android)
-        ensureEcjSystemProperties()
+        // Set temporary system properties that ECJ expects, then restore after compilation.
+        val injectedKeys = ensureEcjSystemProperties()
+        try {
+            val compiler = try {
+                org.eclipse.jdt.internal.compiler.batch.Main(
+                    PrintWriter(outStream),
+                    PrintWriter(errStream),
+                    false, // systemExit
+                    null,  // customDefaultOptions
+                    null   // compilationProgress
+                )
+            } catch (e: ExceptionInInitializerError) {
+                // ECJ's static initializer may fail on Android due to MessageFormat patterns
+                // referencing system properties that don't exist. Log and retry once.
+                log("[ECJ] WARNING: ECJ initialization error: ${e.message}")
+                e.cause?.let { log("[ECJ] Caused by: ${it.message}") }
+                org.eclipse.jdt.internal.compiler.batch.Main(
+                    PrintWriter(outStream),
+                    PrintWriter(errStream),
+                    false,
+                    null,
+                    null
+                )
+            }
 
-        val compiler = try {
-            org.eclipse.jdt.internal.compiler.batch.Main(
-                PrintWriter(outStream),
-                PrintWriter(errStream),
-                false, // systemExit
-                null,  // customDefaultOptions
-                null   // compilationProgress
-            )
-        } catch (e: ExceptionInInitializerError) {
-            // ECJ's static initializer may fail on Android due to MessageFormat patterns
-            // referencing system properties that don't exist. Log and create a dummy compiler.
-            log("[ECJ] WARNING: ECJ initialization error: ${e.message}")
-            e.cause?.let { log("[ECJ] Caused by: ${it.message}") }
-            // Try again - sometimes the second attempt succeeds after properties are set
-            org.eclipse.jdt.internal.compiler.batch.Main(
-                PrintWriter(outStream),
-                PrintWriter(errStream),
-                false,
-                null,
-                null
-            )
+            compiler.compile(args.toTypedArray())
+
+            val stdout = outBuf.toString()
+            val stderr = errBuf.toString()
+            if (stdout.isNotBlank()) log("[ECJ] $stdout")
+            if (stderr.isNotBlank()) log("[ECJ] $stderr")
+
+            if (compiler.globalErrorsCount > 0) {
+                throw RuntimeException("Java compilation failed:\n$stderr\n$stdout")
+            }
+
+            log("[ECJ] Compilation succeeded (${compiler.exportedClassFilesCounter} class files)")
+        } finally {
+            restoreEcjSystemProperties(injectedKeys)
         }
-
-        compiler.compile(args.toTypedArray())
-
-        val stdout = outBuf.toString()
-        val stderr = errBuf.toString()
-        if (stdout.isNotBlank()) log("[ECJ] $stdout")
-        if (stderr.isNotBlank()) log("[ECJ] $stderr")
-
-        if (compiler.globalErrorsCount > 0) {
-            throw RuntimeException("Java compilation failed:\n$stderr\n$stdout")
-        }
-
-        log("[ECJ] Compilation succeeded (${compiler.exportedClassFilesCounter} class files)")
     }
 
     /**
@@ -131,7 +133,7 @@ class EcjCompiler(
      * On Android, many java.lang.System properties are null/empty which causes
      * MessageFormat patterns in ECJ to throw NullPointerException.
      */
-    private fun ensureEcjSystemProperties() {
+    private fun ensureEcjSystemProperties(): Set<String> {
         val props = mapOf(
             "java.version" to (System.getProperty("java.version") ?: "0"),
             "java.vendor" to (System.getProperty("java.vendor") ?: "Android"),
@@ -151,11 +153,18 @@ class EcjCompiler(
             "java.home" to (System.getProperty("java.home") ?: "/system"),
             "java.io.tmpdir" to (System.getProperty("java.io.tmpdir") ?: "/data/local/tmp"),
         )
+        val injected = mutableSetOf<String>()
         props.forEach { (key, value) ->
             if (System.getProperty(key) == null) {
                 System.setProperty(key, value)
+                injected += key
             }
         }
+        return injected
+    }
+
+    private fun restoreEcjSystemProperties(injectedKeys: Set<String>) {
+        injectedKeys.forEach { key -> System.clearProperty(key) }
     }
 
     private fun findRootProjectDir(startDir: File): File? {

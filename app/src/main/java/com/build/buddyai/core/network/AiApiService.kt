@@ -5,7 +5,6 @@ import com.build.buddyai.core.model.ModelMetadataRegistry
 import com.build.buddyai.core.model.ProviderType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import android.util.Base64
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -20,7 +19,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -247,47 +245,9 @@ class AiApiService @Inject constructor(
     }
 
 
-    private fun openAiMessage(message: AiChatMessage) = buildJsonObject {
-        put("role", message.role)
-        if (message.imagePaths.isEmpty()) {
-            put("content", message.text)
-        } else {
-            putJsonArray("content") {
-                if (message.text.isNotBlank()) add(buildJsonObject {
-                    put("type", "text")
-                    put("text", message.text)
-                })
-                message.imagePaths.forEach { path ->
-                    add(buildJsonObject {
-                        put("type", "image_url")
-                        putJsonObject("image_url") {
-                            put("url", fileToDataUrl(path))
-                        }
-                    })
-                }
-            }
-        }
-    }
+    private fun openAiMessage(message: AiChatMessage) = AiImagePayloadUtils.openAiMessage(message)
 
-    private fun geminiInlineImagePart(path: String) = buildJsonObject {
-        putJsonObject("inlineData") {
-            put("mimeType", mimeTypeFor(path))
-            put("data", Base64.encodeToString(File(path).readBytes(), Base64.NO_WRAP))
-        }
-    }
-
-    private fun fileToDataUrl(path: String): String {
-        val file = File(path)
-        val bytes = file.readBytes()
-        return "data:${mimeTypeFor(path)};base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
-    }
-
-    private fun mimeTypeFor(path: String): String = when (path.substringAfterLast('.', "").lowercase()) {
-        "jpg", "jpeg" -> "image/jpeg"
-        "png" -> "image/png"
-        "webp" -> "image/webp"
-        else -> "application/octet-stream"
-    }
+    private fun geminiInlineImagePart(path: String) = AiImagePayloadUtils.geminiInlineImagePart(path)
 
     private fun parseModels(providerType: ProviderType, body: String): List<AiModel> {
         val root = json.parseToJsonElement(body).jsonObject
