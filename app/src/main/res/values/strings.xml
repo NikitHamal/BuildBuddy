@@ -189,7 +189,7 @@
     <string name="settings_build_cache">Build Cache</string>
     <string name="settings_clear_cache">Clear Cache</string>
     <string name="settings_notifications">Notifications</string>
-    <string name="settings_build_notifications">Build Notifications</string>
+    <string name="settings_build_notifications">Build and Agent Notifications</string>
     <string name="settings_privacy">Privacy &amp; Security</string>
     <string name="settings_clear_data">Clear App Data</string>
     <string name="settings_export_logs">Export Logs</string>

@@ -1,6 +1,7 @@
 package com.build.buddyai.feature.agent
 
 import android.content.Context
+import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.build.buddyai.core.agent.AgentChangeSetManager
@@ -9,6 +10,7 @@ import com.build.buddyai.core.agent.AgentFileWrite
 import com.build.buddyai.core.agent.AgentReviewPolicy
 import com.build.buddyai.core.agent.AgentContextAssembler
 import com.build.buddyai.core.agent.AgentExecutionPlan
+import com.build.buddyai.core.agent.AgentBackgroundExecutionRegistry
 import com.build.buddyai.core.agent.AgentTaskProtocol
 import com.build.buddyai.core.agent.TextDiffEngine
 import com.build.buddyai.core.agent.ProjectFailureMemoryStore
@@ -19,6 +21,8 @@ import com.build.buddyai.core.common.ArtifactProvenance
 import com.build.buddyai.core.common.ArtifactProvenanceStore
 import com.build.buddyai.core.common.BuildArtifactInstaller
 import com.build.buddyai.core.common.BuildProfileManager
+import com.build.buddyai.core.common.AgentForegroundService
+import com.build.buddyai.core.common.ExecutionNotificationManager
 import com.build.buddyai.core.common.FileUtils
 import com.build.buddyai.core.common.SnapshotManager
 import com.build.buddyai.core.data.datastore.SettingsDataStore
@@ -121,6 +125,7 @@ class AgentViewModel @Inject constructor(
     private val streamingService: AiStreamingService,
     private val snapshotManager: SnapshotManager,
     private val contextAssembler: AgentContextAssembler,
+    private val backgroundExecutionRegistry: AgentBackgroundExecutionRegistry,
     private val textDiffEngine: TextDiffEngine,
     private val changeSetManager: AgentChangeSetManager,
     private val failureMemoryStore: ProjectFailureMemoryStore,
@@ -128,6 +133,7 @@ class AgentViewModel @Inject constructor(
     private val integrityChecker: ProjectIntegrityChecker,
     private val buildProfileManager: BuildProfileManager,
     private val artifactInstaller: BuildArtifactInstaller,
+    private val executionNotificationManager: ExecutionNotificationManager,
     private val provenanceStore: ArtifactProvenanceStore,
     private val settingsDataStore: SettingsDataStore,
     private val problemsService: ProjectProblemsService,
@@ -151,9 +157,11 @@ class AgentViewModel @Inject constructor(
     private var problemsJob: Job? = null
     private var settingsJob: Job? = null
     private var providersJob: Job? = null
+    private var notificationsEnabled: Boolean = true
+    private var currentProjectName: String = "Project"
 
     override fun onCleared() {
-        streamJob?.cancel()
+        // Keep active agent execution running in background registry even if the screen is destroyed.
         sessionsJob?.cancel()
         messagesJob?.cancel()
         artifactsJob?.cancel()
@@ -172,6 +180,9 @@ class AgentViewModel @Inject constructor(
 
     fun initialize(projectId: String) {
         currentProjectId = projectId
+        viewModelScope.launch {
+            currentProjectName = projectRepository.getProjectById(projectId)?.name ?: "Project"
+        }
         observeSettings()
         observeProviders()
         loadProviderState()
@@ -194,6 +205,7 @@ class AgentViewModel @Inject constructor(
         settingsJob?.cancel()
         settingsJob = viewModelScope.launch {
             settingsDataStore.settings.collectLatest { settings ->
+                notificationsEnabled = settings.buildNotifications
                 _uiState.update { it.copy(autonomyMode = settings.autonomyMode) }
                 loadProviderState()
             }
@@ -341,18 +353,24 @@ class AgentViewModel @Inject constructor(
 
             currentProject()?.let { project ->
                 val projectDir = File(project.projectPath)
+                currentProjectName = project.name
                 if (projectDir.exists()) snapshotManager.createSnapshot(project.id, projectDir, "pre_agent")
             }
 
             streamJob?.cancel()
-            streamJob = viewModelScope.launch {
-                executeAutonomousTurn(
-                    sessionId = sessionId,
-                    visibleUserInput = input.ifBlank { "Analyze the attached image and help with the project." },
-                    attachedFiles = state.attachedFiles,
-                    repairAttempt = 0,
-                    repairContext = null
-                )
+            startAgentForeground(sessionId, "Planning and analyzing request...")
+            streamJob = backgroundExecutionRegistry.launch(sessionId) {
+                try {
+                    executeAutonomousTurn(
+                        sessionId = sessionId,
+                        visibleUserInput = input.ifBlank { "Analyze the attached image and help with the project." },
+                        attachedFiles = state.attachedFiles,
+                        repairAttempt = 0,
+                        repairContext = null
+                    )
+                } finally {
+                    stopAgentForeground()
+                }
             }
         }
     }
@@ -371,6 +389,8 @@ class AgentViewModel @Inject constructor(
             val modelContextWindow = provider.models.firstOrNull { it.id == modelId }?.contextWindow
             val project = currentProject() ?: return finishWithError(sessionId, "Project not found")
             val projectDir = File(project.projectPath)
+            currentProjectName = project.name
+            updateAgentForeground(sessionId, "Using ${provider.name} • ${modelId}")
             val contextSnapshot = contextAssembler.assemble(
                 projectId = project.id,
                 projectDir = projectDir,
@@ -584,6 +604,8 @@ class AgentViewModel @Inject constructor(
 
         if (!parsed.isTask) {
             clearActions()
+            notifyAgentOutcome(success = true, detail = "Assistant response is ready.")
+            stopAgentForeground()
             return
         }
 
@@ -610,6 +632,8 @@ class AgentViewModel @Inject constructor(
                 action(AgentActionType.PLANNING, "Prepared a staged patch for review", ActionStatus.COMPLETED),
                 action(AgentActionType.EDITING_FILE, "Waiting for review approval", ActionStatus.IN_PROGRESS)
             )
+            notifyAgentOutcome(success = false, detail = "Review approval required before applying staged changes.")
+            stopAgentForeground()
             return
         }
 
@@ -840,7 +864,11 @@ class AgentViewModel @Inject constructor(
                     executeAutonomousTurn(
                         sessionId = sessionId,
                         visibleUserInput = visibleUserInput,
-                        attachedFiles = (diffs.map { it.filePath } + attachedFiles).distinct(),
+                        attachedFiles = (
+                            diffs.map { it.filePath } +
+                                attachedFiles +
+                                inferPathsFromFailureContext(integrity.summary())
+                            ).distinct(),
                         repairAttempt = nextAttempt,
                         repairContext = composeRepairContext(
                             baseContext = integrity.summary(),
@@ -855,12 +883,40 @@ class AgentViewModel @Inject constructor(
                         sessionId,
                         "Integrity repair attempts are exhausted after $MAX_AUTOMATIC_REPAIR_PASSES passes. Reply with your priority (fast compile, minimal code churn, or aggressive refactor), and I will continue with that strategy."
                     )
+                    notifyAgentOutcome(success = false, detail = "Integrity repair exhausted after $MAX_AUTOMATIC_REPAIR_PASSES passes.")
+                    stopAgentForeground()
                 }
                 return
             }
 
             if (!parsed.shouldBuild) {
                 setActions(action(AgentActionType.VERIFYING, "Integrity validation passed", ActionStatus.COMPLETED))
+                val goalGap = detectGoalGap(visibleUserInput, diffs)
+                if (goalGap != null && repairAttempt < MAX_AUTOMATIC_REPAIR_PASSES) {
+                    val nextAttempt = repairAttempt + 1
+                    val strategy = repairStrategyForAttempt(nextAttempt)
+                    persistSystemMessage(sessionId, "Code builds, but goal coverage looks incomplete: $goalGap")
+                    executeAutonomousTurn(
+                        sessionId = sessionId,
+                        visibleUserInput = visibleUserInput,
+                        attachedFiles = (
+                            diffs.map { it.filePath } +
+                                attachedFiles +
+                                inferPathsFromFailureContext(goalGap)
+                            ).distinct(),
+                        repairAttempt = nextAttempt,
+                        repairContext = composeRepairContext(
+                            baseContext = goalGap,
+                            failureSignature = "goal_gap_${nextAttempt}",
+                            attemptNumber = nextAttempt,
+                            strategy = strategy,
+                            failureType = "goal-verification"
+                        )
+                    )
+                    return
+                }
+                notifyAgentOutcome(success = true, detail = "Changes applied and integrity checks passed.")
+                stopAgentForeground()
                 return
             }
 
@@ -883,6 +939,32 @@ class AgentViewModel @Inject constructor(
                     action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
                     action(AgentActionType.BUILDING, buildOutcome.summary, ActionStatus.COMPLETED)
                 )
+                val goalGap = detectGoalGap(visibleUserInput, diffs)
+                if (goalGap != null && repairAttempt < MAX_AUTOMATIC_REPAIR_PASSES) {
+                    val nextAttempt = repairAttempt + 1
+                    val strategy = repairStrategyForAttempt(nextAttempt)
+                    persistSystemMessage(sessionId, "Build passed, but goal coverage looks incomplete: $goalGap")
+                    executeAutonomousTurn(
+                        sessionId = sessionId,
+                        visibleUserInput = visibleUserInput,
+                        attachedFiles = (
+                            diffs.map { it.filePath } +
+                                attachedFiles +
+                                inferPathsFromFailureContext(goalGap)
+                            ).distinct(),
+                        repairAttempt = nextAttempt,
+                        repairContext = composeRepairContext(
+                            baseContext = goalGap,
+                            failureSignature = "goal_gap_${nextAttempt}",
+                            attemptNumber = nextAttempt,
+                            strategy = strategy,
+                            failureType = "goal-verification"
+                        )
+                    )
+                    return
+                }
+                notifyAgentOutcome(success = true, detail = buildOutcome.summary)
+                stopAgentForeground()
                 return
             }
 
@@ -904,6 +986,8 @@ class AgentViewModel @Inject constructor(
                     sessionId,
                     "Automatic repair attempts are exhausted after $MAX_AUTOMATIC_REPAIR_PASSES passes. Reply with your priority (fast compile, minimal code churn, or aggressive refactor), and I will continue with that strategy."
                 )
+                notifyAgentOutcome(success = false, detail = "Automatic repair exhausted after $MAX_AUTOMATIC_REPAIR_PASSES passes.")
+                stopAgentForeground()
                 return
             }
 
@@ -916,7 +1000,11 @@ class AgentViewModel @Inject constructor(
             executeAutonomousTurn(
                 sessionId = sessionId,
                 visibleUserInput = visibleUserInput,
-                attachedFiles = (diffs.map { it.filePath } + attachedFiles).distinct(),
+                attachedFiles = (
+                    diffs.map { it.filePath } +
+                        attachedFiles +
+                        inferPathsFromFailureContext(buildOutcome.failureContext ?: buildOutcome.summary)
+                    ).distinct(),
                 repairAttempt = nextAttempt,
                 repairContext = composeRepairContext(
                     baseContext = buildOutcome.failureContext ?: buildOutcome.summary,
@@ -1115,6 +1203,7 @@ class AgentViewModel @Inject constructor(
     }
 
     fun cancelStream() {
+        backgroundExecutionRegistry.cancel(_uiState.value.sessionId)
         streamJob?.cancel()
         _uiState.update {
             it.copy(
@@ -1126,6 +1215,8 @@ class AgentViewModel @Inject constructor(
                 }
             )
         }
+        stopAgentForeground()
+        notifyAgentOutcome(success = false, detail = "Agent task cancelled.")
     }
 
     fun retryLastMessage() {
@@ -1165,6 +1256,8 @@ class AgentViewModel @Inject constructor(
                 currentActions = listOf(action(AgentActionType.ANALYZING_LOGS, message, ActionStatus.FAILED))
             )
         }
+        notifyAgentOutcome(success = false, detail = message.take(180))
+        stopAgentForeground()
     }
 
     private fun Throwable.toAgentFailureMessage(): String {
@@ -1338,6 +1431,58 @@ class AgentViewModel @Inject constructor(
         return listOf("build", "create", "make", "generate", "app", "screen", "ui", "ux").count { it in normalized } >= 2
     }
 
+    private fun detectGoalGap(request: String, diffs: List<FileDiff>): String? {
+        val normalized = request.lowercase()
+        if (normalized.isBlank()) return null
+        val changedPaths = diffs.map { it.filePath.lowercase() }
+
+        if ((normalized.contains("persist") || normalized.contains("across restarts")) &&
+            changedPaths.none {
+                it.contains("datastore") ||
+                    it.contains("preferences") ||
+                    it.contains("sharedpref") ||
+                    it.contains("settings")
+            }
+        ) {
+            return "The request asks for persistence, but no persistence-related file changes were detected."
+        }
+
+        if ((normalized.contains("dark mode") || normalized.contains("theme")) &&
+            changedPaths.none {
+                it.contains("theme") ||
+                    it.contains("settings") ||
+                    it.contains("style") ||
+                    it.contains("colors")
+            }
+        ) {
+            return "The request mentions dark mode/theme behavior, but no theme-related files appear in the patch."
+        }
+
+        if ((normalized.contains("toggle") || normalized.contains("switch")) &&
+            changedPaths.none {
+                it.contains("layout") ||
+                    it.contains("screen") ||
+                    it.contains("activity") ||
+                    it.contains("fragment") ||
+                    it.contains("compose")
+            }
+        ) {
+            return "The request expects a toggle control, but no UI surface changes were detected."
+        }
+
+        return null
+    }
+
+    private fun inferPathsFromFailureContext(contextText: String): List<String> {
+        if (contextText.isBlank()) return emptyList()
+        val pattern = Regex("""([A-Za-z0-9_./-]+\.(?:kt|java|xml|kts|gradle|properties|pro|json))""")
+        return pattern.findAll(contextText)
+            .map { it.groupValues[1].trim() }
+            .mapNotNull { normalizePathOrNull(it) }
+            .distinct()
+            .take(24)
+    }
+
     private data class RepairStrategy(val label: String, val instructions: String)
 
     private fun repairStrategyForAttempt(attemptNumber: Int): RepairStrategy = when (attemptNumber) {
@@ -1376,6 +1521,40 @@ class AgentViewModel @Inject constructor(
         appendLine("Do not repeat the exact same patch pattern from earlier failed passes.")
     }.trim()
 
+    private fun startAgentForeground(sessionId: String, status: String) {
+        context.startForegroundService(
+            Intent(context, AgentForegroundService::class.java).apply {
+                putExtra(AgentForegroundService.EXTRA_SESSION_ID, sessionId)
+                putExtra(AgentForegroundService.EXTRA_PROJECT_NAME, currentProjectName)
+                putExtra(AgentForegroundService.EXTRA_STATUS, status.take(120))
+            }
+        )
+    }
+
+    private fun updateAgentForeground(sessionId: String, status: String) {
+        context.startForegroundService(
+            Intent(context, AgentForegroundService::class.java).apply {
+                action = AgentForegroundService.ACTION_UPDATE
+                putExtra(AgentForegroundService.EXTRA_SESSION_ID, sessionId)
+                putExtra(AgentForegroundService.EXTRA_PROJECT_NAME, currentProjectName)
+                putExtra(AgentForegroundService.EXTRA_STATUS, status.take(120))
+            }
+        )
+    }
+
+    private fun stopAgentForeground() {
+        context.stopService(Intent(context, AgentForegroundService::class.java))
+    }
+
+    private fun notifyAgentOutcome(success: Boolean, detail: String) {
+        if (!notificationsEnabled) return
+        executionNotificationManager.notifyAgentOutcome(
+            projectName = currentProjectName,
+            success = success,
+            detail = detail
+        )
+    }
+
     private fun action(
         type: AgentActionType,
         description: String,
@@ -1391,6 +1570,13 @@ class AgentViewModel @Inject constructor(
 
     private fun setActions(vararg actions: AgentAction) {
         _uiState.update { it.copy(currentActions = actions.toList()) }
+        val sessionId = _uiState.value.sessionId
+        if (sessionId != null && backgroundExecutionRegistry.isRunning(sessionId)) {
+            updateAgentForeground(
+                sessionId = sessionId,
+                status = actions.firstOrNull()?.description?.take(100) ?: "Agent is working..."
+            )
+        }
     }
 
     private fun clearActions() {

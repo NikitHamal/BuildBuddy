@@ -30,11 +30,23 @@ object AgentReviewPolicy {
                             op.target.contains("manifest", ignoreCase = true) ||
                             op.target.contains("/application", ignoreCase = true))
                 }
+            val gradleTouched = affectedPaths.any {
+                it.endsWith("build.gradle") ||
+                    it.endsWith("build.gradle.kts") ||
+                    it.endsWith("settings.gradle.kts") ||
+                    it.endsWith("gradle.properties")
+            }
+            val releaseSensitiveTouched = affectedPaths.any {
+                it.contains("proguard", ignoreCase = true) ||
+                    it.contains("keystore", ignoreCase = true) ||
+                    it.contains("sign", ignoreCase = true)
+            }
+
             if (deletes.isNotEmpty()) add("Delete operations require review in Autonomous safe mode.")
-            if (manifestTouched) add("Manifest changes require review.")
-            if (affectedPaths.any { it.endsWith("build.gradle") || it.endsWith("build.gradle.kts") || it.endsWith("settings.gradle.kts") || it.endsWith("gradle.properties") }) add("Gradle and build configuration changes require review.")
-            if (affectedPaths.any { it.contains("proguard", ignoreCase = true) || it.contains("keystore", ignoreCase = true) || it.contains("sign", ignoreCase = true) }) add("Signing or release configuration changes require review.")
-            if (affectedPaths.size > 8) add("Large multi-file patch requires review.")
+            if (releaseSensitiveTouched) add("Signing or release-sensitive configuration changes require review.")
+            if (affectedPaths.size > 20) add("Large multi-file patch requires review.")
+            if (manifestTouched && affectedPaths.size > 14) add("Large patch includes manifest changes and should be reviewed.")
+            if (gradleTouched && affectedPaths.size > 14) add("Large patch includes Gradle/build configuration changes and should be reviewed.")
         }
         return Decision(reasons.isNotEmpty(), reasons)
     }

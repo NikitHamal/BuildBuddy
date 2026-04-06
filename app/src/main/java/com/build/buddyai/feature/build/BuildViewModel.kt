@@ -13,9 +13,11 @@ import com.build.buddyai.core.common.BuildArtifactInstaller
 import com.build.buddyai.core.common.BuildCancellationRegistry
 import com.build.buddyai.core.common.BuildForegroundService
 import com.build.buddyai.core.common.BuildProfileManager
+import com.build.buddyai.core.common.ExecutionNotificationManager
 import com.build.buddyai.core.common.SigningAuditEntry
 import com.build.buddyai.core.common.SigningAuditStore
 import com.build.buddyai.core.common.SnapshotManager
+import com.build.buddyai.core.data.datastore.SettingsDataStore
 import com.build.buddyai.core.data.repository.ArtifactRepository
 import com.build.buddyai.core.data.repository.BuildRepository
 import com.build.buddyai.core.data.repository.ProjectRepository
@@ -81,6 +83,8 @@ class BuildViewModel @Inject constructor(
     private val changeSetManager: AgentChangeSetManager,
     private val diagnosticsEngine: ProjectDiagnosticsEngine,
     private val signingAuditStore: SigningAuditStore,
+    private val settingsDataStore: SettingsDataStore,
+    private val executionNotificationManager: ExecutionNotificationManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -92,9 +96,22 @@ class BuildViewModel @Inject constructor(
     private var buildHistoryJob: Job? = null
     private var artifactsJob: Job? = null
     private var problemsJob: Job? = null
+    private var settingsJob: Job? = null
+    private var notificationsEnabled: Boolean = true
+
+    override fun onCleared() {
+        buildJob?.cancel()
+        buildHistoryJob?.cancel()
+        artifactsJob?.cancel()
+        problemsJob?.cancel()
+        settingsJob?.cancel()
+        stopBuildForeground()
+        super.onCleared()
+    }
 
     fun initialize(projectId: String) {
         currentProjectId = projectId
+        observeSettings()
         _uiState.update {
             it.copy(
                 buildProfile = buildProfileManager.loadProfile(projectId),
@@ -114,6 +131,15 @@ class BuildViewModel @Inject constructor(
         observeBuildHistory(projectId)
         observeArtifacts(projectId)
         observeProblems(projectId)
+    }
+
+    private fun observeSettings() {
+        settingsJob?.cancel()
+        settingsJob = viewModelScope.launch {
+            settingsDataStore.settings.collectLatest { settings ->
+                notificationsEnabled = settings.buildNotifications
+            }
+        }
     }
 
     private fun observeBuildHistory(projectId: String) {
@@ -213,25 +239,33 @@ class BuildViewModel @Inject constructor(
             val project = projectRepository.getProjectById(projectId) ?: return@launch
             val buildId = UUID.randomUUID().toString()
             val buildProfile = buildProfileManager.loadProfile(projectId)
-            val preflightProblems = diagnosticsEngine.scan(project, File(project.projectPath), buildProfile)
-            if (preflightProblems.any { it.severity == ProblemSeverity.ERROR }) {
-                problemsService.replace(projectId, preflightProblems)
-                _uiState.update {
-                    it.copy(
-                        buildStatus = BuildStatus.FAILED,
-                        statusMessage = "Pre-build validation failed",
-                        errorSummary = preflightProblems.joinToString(" | ") { problem -> problem.title },
-                        problems = preflightProblems,
-                        buildProfile = buildProfile
-                    )
+            try {
+                val preflightProblems = diagnosticsEngine.scan(project, File(project.projectPath), buildProfile)
+                if (preflightProblems.any { it.severity == ProblemSeverity.ERROR }) {
+                    problemsService.replace(projectId, preflightProblems)
+                    _uiState.update {
+                        it.copy(
+                            buildStatus = BuildStatus.FAILED,
+                            statusMessage = "Pre-build validation failed",
+                            errorSummary = preflightProblems.joinToString(" | ") { problem -> problem.title },
+                            problems = preflightProblems,
+                            buildProfile = buildProfile
+                        )
+                    }
+                    addTimeline("Preflight", "Blocked by diagnostics: ${preflightProblems.first().title}", isError = true)
+                    if (notificationsEnabled) {
+                        executionNotificationManager.notifyBuildOutcome(
+                            projectName = project.name,
+                            success = false,
+                            detail = "Pre-build validation failed: ${preflightProblems.first().title}"
+                        )
+                    }
+                    return@launch
                 }
-                addTimeline("Preflight", "Blocked by diagnostics: ${preflightProblems.first().title}", isError = true)
-                return@launch
-            }
 
-            val snapshot = snapshotManager.createSnapshot(projectId, File(project.projectPath), "pre_build")
-            refreshRestorePoints()
-            problemsService.clear(projectId)
+                val snapshot = snapshotManager.createSnapshot(projectId, File(project.projectPath), "pre_build")
+                refreshRestorePoints()
+                problemsService.clear(projectId)
 
             _uiState.update {
                 it.copy(
@@ -252,12 +286,7 @@ class BuildViewModel @Inject constructor(
                 )
             }
 
-            context.startForegroundService(
-                Intent(context, BuildForegroundService::class.java).apply {
-                    putExtra(BuildForegroundService.EXTRA_BUILD_ID, buildId)
-                    putExtra(BuildForegroundService.EXTRA_PROJECT_NAME, project.name)
-                }
-            )
+                startBuildForeground(project.name, buildId)
 
             val buildRecord = BuildRecord(
                 id = buildId,
@@ -269,11 +298,12 @@ class BuildViewModel @Inject constructor(
             buildRepository.insertBuildRecord(buildRecord)
             projectRepository.updateProject(project.copy(lastBuildStatus = BuildStatus.BUILDING))
 
-            buildProjectUseCase(project, buildId, buildProfile) { event ->
-                when (event) {
+                buildProjectUseCase(project, buildId, buildProfile) { event ->
+                    when (event) {
                     is BuildProjectUseCase.BuildEvent.Progress -> {
                         _uiState.update { state -> state.copy(buildProgress = event.progress, statusMessage = event.message) }
                         addTimeline("Progress", event.message)
+                        updateBuildForeground(project.name, buildId, event.message)
                     }
                     is BuildProjectUseCase.BuildEvent.Log -> {
                         _uiState.update { state -> state.copy(logEntries = state.logEntries + event.entry) }
@@ -359,6 +389,13 @@ class BuildViewModel @Inject constructor(
                             )
                         }
                         addTimeline("Artifact", "Built ${artifact.fileName}")
+                        if (notificationsEnabled) {
+                            executionNotificationManager.notifyBuildOutcome(
+                                projectName = project.name,
+                                success = true,
+                                detail = "Built ${artifact.fileName} (${buildProfile.variant.displayName})."
+                            )
+                        }
                         if (buildProfile.installAfterBuild && buildProfile.artifactFormat == ArtifactFormat.APK) {
                             when (val result = buildArtifactInstaller.install(context, File(artifact.filePath))) {
                                 is BuildArtifactInstaller.InstallResult.Started -> addTimeline("Install", "Installer opened")
@@ -405,6 +442,13 @@ class BuildViewModel @Inject constructor(
                             )
                         }
                         addTimeline("Build", event.error, isError = true)
+                        if (notificationsEnabled) {
+                            executionNotificationManager.notifyBuildOutcome(
+                                projectName = project.name,
+                                success = false,
+                                detail = event.error.take(240)
+                            )
+                        }
                     }
                     is BuildProjectUseCase.BuildEvent.Cancelled -> {
                         val completedAt = System.currentTimeMillis()
@@ -421,11 +465,19 @@ class BuildViewModel @Inject constructor(
                             it.copy(isBuilding = false, buildStatus = BuildStatus.CANCELLED, statusMessage = event.message, errorSummary = null)
                         }
                         addTimeline("Build", event.message, isError = true)
+                        if (notificationsEnabled) {
+                            executionNotificationManager.notifyBuildOutcome(
+                                projectName = project.name,
+                                success = false,
+                                detail = "Build cancelled."
+                            )
+                        }
+                    }
                     }
                 }
+            } finally {
+                stopBuildForeground()
             }
-
-            context.stopService(Intent(context, BuildForegroundService::class.java))
         }
     }
 
@@ -437,7 +489,7 @@ class BuildViewModel @Inject constructor(
             it.copy(isBuilding = false, buildStatus = BuildStatus.CANCELLED, statusMessage = "Build cancelled")
         }
         addTimeline("Build", "Build cancelled", isError = true)
-        context.stopService(Intent(context, BuildForegroundService::class.java))
+        stopBuildForeground()
     }
 
     fun cleanBuild() {
@@ -558,5 +610,29 @@ class BuildViewModel @Inject constructor(
                 ).take(30)
             )
         }
+    }
+
+    private fun startBuildForeground(projectName: String, buildId: String) {
+        context.startForegroundService(
+            Intent(context, BuildForegroundService::class.java).apply {
+                putExtra(BuildForegroundService.EXTRA_BUILD_ID, buildId)
+                putExtra(BuildForegroundService.EXTRA_PROJECT_NAME, projectName)
+            }
+        )
+    }
+
+    private fun updateBuildForeground(projectName: String, buildId: String, status: String) {
+        context.startForegroundService(
+            Intent(context, BuildForegroundService::class.java).apply {
+                action = BuildForegroundService.ACTION_UPDATE
+                putExtra(BuildForegroundService.EXTRA_BUILD_ID, buildId)
+                putExtra(BuildForegroundService.EXTRA_PROJECT_NAME, projectName)
+                putExtra(BuildForegroundService.EXTRA_STATUS, status.take(120))
+            }
+        )
+    }
+
+    private fun stopBuildForeground() {
+        context.stopService(Intent(context, BuildForegroundService::class.java))
     }
 }
