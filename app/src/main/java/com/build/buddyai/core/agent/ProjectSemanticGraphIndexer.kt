@@ -94,6 +94,14 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
             .filterNot { isIgnored(projectDir, it) }
             .sortedBy { it.relativeTo(projectDir).invariantSeparatorsPath }
             .toList()
+        val textCache = mutableMapOf<File, String>()
+        fun readTextCached(file: File): String = textCache.getOrPut(file) {
+            runCatching { file.readText() }.getOrDefault("")
+        }
+        val lowerTextCache = mutableMapOf<File, String>()
+        fun readLowerTextCached(file: File): String = lowerTextCache.getOrPut(file) {
+            readTextCached(file).lowercase()
+        }
 
         val modules = files.filter { it.name == "build.gradle.kts" || it.name == "build.gradle" }
             .map { buildFile ->
@@ -107,7 +115,7 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
             }
 
         val manifestFile = File(projectDir, "app/src/main/AndroidManifest.xml")
-        val manifestText = runCatching { manifestFile.readText() }.getOrDefault("")
+        val manifestText = if (manifestFile.exists()) readTextCached(manifestFile) else ""
         val manifest = ManifestIndex(
             packageName = Regex("""package\s*=\s*[\"']([^\"']+)[\"']""").find(manifestText)?.groupValues?.get(1).orEmpty(),
             components = buildList {
@@ -120,11 +128,11 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
             placeholders = Regex("""\$\{([A-Za-z0-9_.-]+)\}""").findAll(manifestText).map { it.groupValues[1] }.distinct().toList()
         )
 
-        val resDir = File(projectDir, "app/src/main/res")
-        val layoutFiles = resDir.walkTopDown().filter { it.isFile && it.parentFile?.name?.startsWith("layout") == true }.toList()
-        val valuesFiles = resDir.walkTopDown().filter { it.isFile && it.parentFile?.name?.startsWith("values") == true }.toList()
-        val drawableFiles = resDir.walkTopDown().filter { it.isFile && it.parentFile?.name?.startsWith("drawable") == true }.toList()
-        val allXmlText = (layoutFiles + valuesFiles).associateWith { runCatching { it.readText() }.getOrDefault("") }
+        val resFiles = files.filter { it.relativeTo(projectDir).invariantSeparatorsPath.startsWith("app/src/main/res/") }
+        val layoutFiles = resFiles.filter { it.parentFile?.name?.startsWith("layout") == true }
+        val valuesFiles = resFiles.filter { it.parentFile?.name?.startsWith("values") == true }
+        val drawableFiles = resFiles.filter { it.parentFile?.name?.startsWith("drawable") == true }
+        val allXmlText = (layoutFiles + valuesFiles).associateWith { readTextCached(it) }
 
         val resources = ResourceIndex(
             layouts = layoutFiles.map { it.nameWithoutExtension }.distinct(),
@@ -132,7 +140,7 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
             drawables = drawableFiles.map { it.nameWithoutExtension }.distinct(),
             viewIds = layoutFiles.flatMap { file -> Regex("""android:id=[\"']@\+id/([^\"']+)[\"']""").findAll(allXmlText[file].orEmpty()).map { it.groupValues[1] }.toList() }.distinct(),
             stringReferences = files.filter { it.extension.lowercase() in setOf("kt", "java", "xml") }.flatMap { file ->
-                val text = runCatching { file.readText() }.getOrDefault("")
+                val text = readTextCached(file)
                 Regex("""R\.string\.([A-Za-z0-9_]+)|@string/([A-Za-z0-9_]+)""").findAll(text)
                     .mapNotNull { match -> match.groupValues.drop(1).firstOrNull { it.isNotBlank() } }
                     .toList()
@@ -150,7 +158,7 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
 
         val dependencies = modules.flatMap { module ->
             val buildFile = File(projectDir, module.buildFile)
-            val text = runCatching { buildFile.readText() }.getOrDefault("")
+            val text = readTextCached(buildFile)
             Regex("""\b(implementation|api|ksp|kapt|compileOnly|runtimeOnly|testImplementation|androidTestImplementation|debugImplementation|releaseImplementation)\s*\(([^\n]+)\)""")
                 .findAll(text)
                 .map { DependencyNode(it.groupValues[1], it.groupValues[2].trim(), module.buildFile) }
@@ -159,7 +167,7 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
 
         val apis = files.filter { it.extension.lowercase() in setOf("kt", "java") }.flatMap { file ->
             val relative = file.relativeTo(projectDir).invariantSeparatorsPath
-            val text = runCatching { file.readText() }.getOrDefault("")
+            val text = readTextCached(file)
             val packageName = Regex("""package\s+([A-Za-z0-9_.]+)""").find(text)?.groupValues?.get(1).orEmpty()
             val types = Regex("""\b(class|interface|object|enum\s+class)\s+([A-Za-z0-9_]+)""")
                 .findAll(text)
@@ -175,7 +183,7 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
         }
 
         val packageOwnership = files.filter { it.extension.lowercase() in setOf("kt", "java") }.mapNotNull { file ->
-            val text = runCatching { file.readText() }.getOrDefault("")
+            val text = readTextCached(file)
             val packageName = Regex("""package\s+([A-Za-z0-9_.]+)""").find(text)?.groupValues?.get(1) ?: return@mapNotNull null
             val rootPath = file.parentFile?.relativeTo(projectDir)?.invariantSeparatorsPath.orEmpty()
             PackageOwnership(packageName, rootPath)
@@ -184,7 +192,7 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
         val navigation = buildList {
             files.filter { it.extension.lowercase() == "xml" || it.extension.lowercase() == "kt" || it.extension.lowercase() == "java" }.forEach { file ->
                 val relative = file.relativeTo(projectDir).invariantSeparatorsPath
-                val text = runCatching { file.readText() }.getOrDefault("")
+                val text = readTextCached(file)
                 Regex("""<fragment[^>]+android:id=[\"']@\+id/([^\"']+)[\"'][^>]+android:name=[\"']([^\"']+)[\"']""")
                     .findAll(text)
                     .forEach { add(NavigationNode("fragment", "${it.groupValues[1]} -> ${it.groupValues[2]}", relative)) }
@@ -216,8 +224,7 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
             files.forEach { file ->
                 val relative = file.relativeTo(projectDir).invariantSeparatorsPath
                 if (relative.lowercase().contains(token)) score(relative, 10)
-                val text = runCatching { file.readText() }.getOrDefault("")
-                if (text.lowercase().contains(token)) score(relative, 4)
+                if (readLowerTextCached(file).contains(token)) score(relative, 4)
             }
         }
 

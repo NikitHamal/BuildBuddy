@@ -233,8 +233,9 @@ class ApkPackager(
 
         if (!pk8.exists() || !x509.exists()) {
             log("[APK] ERROR: No signing keys found!")
-            unsignedApk.copyTo(signedApk, overwrite = true)
-            return
+            throw IllegalStateException(
+                "APK signing keys are missing. Expected ${pk8.absolutePath} and ${x509.absolutePath}"
+            )
         }
 
         try {
@@ -263,7 +264,7 @@ class ApkPackager(
             log("[APK] Signed with apksig (v1/v2/v3)")
         } catch (e: Exception) {
             log("[APK] Signing failed: ${e.message}")
-            unsignedApk.copyTo(signedApk, overwrite = true)
+            throw RuntimeException("APK signing failed with bundled test key: ${e.message}", e)
         }
     }
 

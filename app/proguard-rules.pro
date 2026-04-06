@@ -85,6 +85,11 @@
 -keep class com.iyxan23.zipalignjava.** { *; }
 -dontwarn com.iyxan23.zipalignjava.**
 
+# JavaParser (AST edit engine used by AI patch operations)
+# Keep full metadata and members: lexical-preserving internals are sensitive to shrinking/obfuscation.
+-keep class com.github.javaparser.** { *; }
+-dontwarn com.github.javaparser.**
+
 # BouncyCastle (APK signing)
 -keep class org.bouncycastle.** { *; }
 -dontwarn org.bouncycastle.**

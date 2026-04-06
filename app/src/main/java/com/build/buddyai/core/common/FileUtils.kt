@@ -29,7 +29,7 @@ object FileUtils {
         require(!sanitized.contains("\u0000")) { "Path contains invalid characters" }
 
         val segments = sanitized.split('/').filter { it.isNotBlank() && it != "." }
-        require(segments.isNotEmpty()) { "Path cannot resolve to project root" }
+        require(segments.isNotEmpty()) { "Path must point to a file or directory inside the project" }
         require(segments.none { it == ".." }) { "Parent path traversal is not allowed" }
 
         return segments.joinToString("/")

@@ -85,7 +85,8 @@ class AgentChangeSetManager @Inject constructor(
             )
             persist(projectId, changeSet)
             AppliedChangeSet(changeSet = changeSet, diffs = diffs)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            if (e is VirtualMachineError) throw e
             before.forEach { (path, content) ->
                 val file = FileUtils.resolveProjectFile(projectDir, path)
                 if (content == null) {
@@ -114,6 +115,7 @@ class AgentChangeSetManager @Inject constructor(
             val current = FileUtils.readFileContent(projectDir, change.path).orEmpty()
             if (change.beforeContent == null) {
                 FileUtils.deleteFileOrDir(projectDir, change.path)
+                pruneEmptyParents(projectDir, change.path)
             } else {
                 FileUtils.writeFileContent(projectDir, change.path, change.beforeContent)
             }
@@ -127,6 +129,20 @@ class AgentChangeSetManager @Inject constructor(
             )
         }
         return diffs.sortedBy { it.filePath }
+    }
+
+    private fun pruneEmptyParents(projectDir: File, relativePath: String) {
+        val projectRoot = projectDir.canonicalFile
+        var cursor = runCatching { FileUtils.resolveProjectFile(projectDir, relativePath).parentFile?.canonicalFile }.getOrNull()
+        while (cursor != null && cursor.path.startsWith(projectRoot.path + File.separator)) {
+            val children = cursor.listFiles()
+            if (children != null && children.isEmpty()) {
+                if (!cursor.delete()) break
+                cursor = cursor.parentFile?.canonicalFile
+            } else {
+                break
+            }
+        }
     }
 
     private fun applyTextOperations(source: String, operations: List<AgentEditOperation>): String {

@@ -62,7 +62,7 @@ class XmlDomEditor @Inject constructor() {
 
     private fun render(document: Document): String {
         val transformer = TransformerFactory.newInstance().newTransformer().apply {
-            setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "no")
+            setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "yes")
             setOutputProperty(OutputKeys.INDENT, "yes")
             setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "4")
         }

@@ -1,6 +1,5 @@
 package com.build.buddyai
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlarmManager
 import android.app.PendingIntent
@@ -37,11 +36,11 @@ import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.system.exitProcess
 
-@SuppressLint("StaticFieldLeak")
 object CrashHandler {
     var pendingCrash: CrashReport? = null
 
     fun init(context: Context) {
+        val appContext = context.applicationContext
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             val crashReport = CrashReport(
@@ -50,16 +49,16 @@ object CrashHandler {
                 exception = throwable.javaClass.name,
                 message = throwable.message ?: "No message",
                 stackTrace = getStackTrace(throwable),
-                deviceInfo = getDeviceInfo(context),
-                appVersion = getAppVersion(context)
+                deviceInfo = getDeviceInfo(appContext),
+                appVersion = getAppVersion(appContext)
             )
             pendingCrash = crashReport
 
-            val intent = Intent(context, CrashActivity::class.java).apply {
+            val intent = Intent(appContext, CrashActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                 putExtra("CRASH_REPORT", crashReport.toJson())
             }
-            context.startActivity(intent)
+            appContext.startActivity(intent)
 
             val pid = android.os.Process.myPid()
             android.os.Process.killProcess(pid)

@@ -11,13 +11,15 @@ import com.build.buddyai.core.model.Project
 import com.build.buddyai.domain.usecase.ondevice.OnDeviceBuildPipeline
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.coroutines.coroutineContext
 
 @Singleton
 class BuildProjectUseCase @Inject constructor(
@@ -40,10 +42,20 @@ class BuildProjectUseCase @Inject constructor(
         buildProfile: BuildProfile = BuildProfile(),
         onEvent: suspend (BuildEvent) -> Unit
     ) = withContext(Dispatchers.IO) {
+        coroutineScope {
         val projectDir = File(project.projectPath)
         if (!projectDir.exists()) {
             onEvent(BuildEvent.Failure("Project directory not found"))
-            return@withContext
+            return@coroutineScope
+        }
+
+        val callbackEvents = Channel<BuildEvent>(Channel.UNLIMITED)
+        val callbackRelay = launch {
+            for (event in callbackEvents) {
+                if (isActive && !buildCancellationRegistry.isCancelled(buildId)) {
+                    onEvent(event)
+                }
+            }
         }
 
         try {
@@ -57,7 +69,7 @@ class BuildProjectUseCase @Inject constructor(
                         "AAB export is configured in the build profile, but the local bundle toolchain is not bundled in this on-device engine yet. Switch the artifact format to APK for now."
                     )
                 )
-                return@withContext
+                return@coroutineScope
             }
 
             if (buildProfile.variant.name == "RELEASE") {
@@ -69,7 +81,7 @@ class BuildProjectUseCase @Inject constructor(
                             "Release build requires a configured keystore, key alias, store password, and key password. Open the build workspace, import a keystore, and save signing details first."
                         )
                     )
-                    return@withContext
+                    return@coroutineScope
                 }
             }
 
@@ -94,25 +106,23 @@ class BuildProjectUseCase @Inject constructor(
                 buildProfile = buildProfile,
                 signingSecrets = signingSecrets,
                 onProgress = { fraction, message ->
-                    kotlinx.coroutines.runBlocking {
-                        if (coroutineContext.isActive && !buildCancellationRegistry.isCancelled(buildId)) {
-                            onEvent(BuildEvent.Progress(fraction, message))
-                        }
+                    if (isActive && !buildCancellationRegistry.isCancelled(buildId)) {
+                        callbackEvents.trySend(BuildEvent.Progress(fraction, message))
                     }
                 },
                 onLog = { message ->
-                    kotlinx.coroutines.runBlocking {
-                        if (coroutineContext.isActive && !buildCancellationRegistry.isCancelled(buildId)) {
-                            val level = classifyLogLevel(message)
-                            onEvent(BuildEvent.Log(logEntry(level, message)))
-                        }
+                    if (isActive && !buildCancellationRegistry.isCancelled(buildId)) {
+                        val level = classifyLogLevel(message)
+                        callbackEvents.trySend(BuildEvent.Log(logEntry(level, message)))
                     }
                 }
             )
+            callbackEvents.close()
+            callbackRelay.join()
 
             if (buildCancellationRegistry.isCancelled(buildId)) {
                 onEvent(BuildEvent.Cancelled())
-                return@withContext
+                return@coroutineScope
             }
 
             onEvent(BuildEvent.Progress(1f, "Build complete"))
@@ -127,7 +137,10 @@ class BuildProjectUseCase @Inject constructor(
                 onEvent(BuildEvent.Log(logEntry(LogLevel.ERROR, e.stackTraceToString())))
             }
         } finally {
+            callbackEvents.close()
+            callbackRelay.join()
             buildCancellationRegistry.unregister(buildId)
+        }
         }
     }
 

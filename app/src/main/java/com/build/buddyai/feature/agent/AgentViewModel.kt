@@ -49,6 +49,7 @@ import com.build.buddyai.core.problems.ProjectProblemsService
 import com.build.buddyai.domain.usecase.BuildProjectUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -141,6 +142,24 @@ class AgentViewModel @Inject constructor(
     private var problemsJob: Job? = null
     private var settingsJob: Job? = null
     private var providersJob: Job? = null
+
+    override fun onCleared() {
+        streamJob?.cancel()
+        sessionsJob?.cancel()
+        messagesJob?.cancel()
+        artifactsJob?.cancel()
+        problemsJob?.cancel()
+        settingsJob?.cancel()
+        providersJob?.cancel()
+        streamJob = null
+        sessionsJob = null
+        messagesJob = null
+        artifactsJob = null
+        problemsJob = null
+        settingsJob = null
+        providersJob = null
+        super.onCleared()
+    }
 
     fun initialize(projectId: String) {
         currentProjectId = projectId
@@ -405,8 +424,9 @@ class AgentViewModel @Inject constructor(
                 projectDir = projectDir,
                 project = project
             )
-        } catch (e: Exception) {
-            finishWithError(sessionId, e.message ?: "AI task failed")
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            finishWithError(sessionId, e.toAgentFailureMessage())
         }
     }
 
@@ -590,15 +610,20 @@ class AgentViewModel @Inject constructor(
         val pending = _uiState.value.pendingReview ?: return
         viewModelScope.launch {
             val project = currentProject() ?: return@launch
-            applyTurnChanges(
-                sessionId = pending.sessionId,
-                parsed = filteredReviewPayload(pending),
-                visibleUserInput = pending.visibleUserInput,
-                attachedFiles = pending.attachedFiles,
-                repairAttempt = pending.repairAttempt,
-                projectDir = File(project.projectPath),
-                project = project
-            )
+            try {
+                applyTurnChanges(
+                    sessionId = pending.sessionId,
+                    parsed = filteredReviewPayload(pending),
+                    visibleUserInput = pending.visibleUserInput,
+                    attachedFiles = pending.attachedFiles,
+                    repairAttempt = pending.repairAttempt,
+                    projectDir = File(project.projectPath),
+                    project = project
+                )
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                finishWithError(pending.sessionId, e.toAgentFailureMessage())
+            }
             _uiState.update { it.copy(pendingReview = null) }
         }
     }
@@ -718,113 +743,118 @@ class AgentViewModel @Inject constructor(
         projectDir: File,
         project: com.build.buddyai.core.model.Project
     ) {
-        setActions(
-            action(AgentActionType.EDITING_FILE, "Applying planned changes"),
-            action(AgentActionType.VERIFYING, if (parsed.shouldBuild) "Running integrity and build validation" else "Running integrity validation")
-        )
-
-        val applied = changeSetManager.apply(
-            projectId = project.id,
-            projectDir = projectDir,
-            summary = parsed.displayMessage,
-            writes = parsed.writes,
-            deletes = parsed.deletes,
-            operations = parsed.operations
-        )
-        val diffs = applied.diffs
-        refreshChangeSets()
-        _uiState.update { it.copy(recentDiffs = diffs, pendingReview = null) }
-        toolMemoryStore.record(project.id, "executor", parsed.displayMessage, diffs.map { it.filePath })
-
-        val integrity = integrityChecker.validate(project, projectDir)
-        val integrityProblems = integrity.errors.map { BuildProblem(ProblemSeverity.ERROR, "Integrity error", it) } +
-            integrity.warnings.map { BuildProblem(ProblemSeverity.WARNING, "Integrity warning", it) }
-        problemsService.replace(project.id, integrityProblems)
-        _uiState.update {
-            it.copy(
-                integrityWarnings = integrity.warnings,
-                problems = integrityProblems
+        try {
+            setActions(
+                action(AgentActionType.EDITING_FILE, "Applying planned changes"),
+                action(AgentActionType.VERIFYING, if (parsed.shouldBuild) "Running integrity and build validation" else "Running integrity validation")
             )
-        }
 
-        if (!integrity.isValid) {
-            val signature = failureMemoryStore.recordFailure(
+            val applied = changeSetManager.apply(
                 projectId = project.id,
-                contextText = integrity.summary(),
+                projectDir = projectDir,
+                summary = parsed.displayMessage,
+                writes = parsed.writes,
+                deletes = parsed.deletes,
+                operations = parsed.operations
+            )
+            val diffs = applied.diffs
+            refreshChangeSets()
+            _uiState.update { it.copy(recentDiffs = diffs, pendingReview = null) }
+            toolMemoryStore.record(project.id, "executor", parsed.displayMessage, diffs.map { it.filePath })
+
+            val integrity = integrityChecker.validate(project, projectDir)
+            val integrityProblems = integrity.errors.map { BuildProblem(ProblemSeverity.ERROR, "Integrity error", it) } +
+                integrity.warnings.map { BuildProblem(ProblemSeverity.WARNING, "Integrity warning", it) }
+            problemsService.replace(project.id, integrityProblems)
+            _uiState.update {
+                it.copy(
+                    integrityWarnings = integrity.warnings,
+                    problems = integrityProblems
+                )
+            }
+
+            if (!integrity.isValid) {
+                val signature = failureMemoryStore.recordFailure(
+                    projectId = project.id,
+                    contextText = integrity.summary(),
+                    editedFiles = diffs.map { it.filePath },
+                    request = visibleUserInput,
+                    memoryContext = buildMemoryContext(project, visibleUserInput)
+                )
+                setActions(
+                    action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
+                    action(AgentActionType.VERIFYING, "Integrity validation failed", ActionStatus.FAILED)
+                )
+                if (repairAttempt < 1) {
+                    persistSystemMessage(sessionId, "Integrity validation failed, so I am running one automatic repair pass now.")
+                    executeAutonomousTurn(
+                        sessionId = sessionId,
+                        visibleUserInput = visibleUserInput,
+                        attachedFiles = (diffs.map { it.filePath } + attachedFiles).distinct(),
+                        repairAttempt = repairAttempt + 1,
+                        repairContext = integrity.summary() + "\n\nFailure signature: $signature"
+                    )
+                }
+                return
+            }
+
+            if (!parsed.shouldBuild) {
+                setActions(action(AgentActionType.VERIFYING, "Integrity validation passed", ActionStatus.COMPLETED))
+                return
+            }
+
+            val buildProfile = buildProfileManager.loadProfile(project.id)
+            val buildOutcome = runValidationBuild(project, buildProfile)
+            val combinedProblems = integrityProblems + buildOutcome.problems
+            problemsService.replace(project.id, combinedProblems)
+            _uiState.update {
+                it.copy(
+                    lastBuildStatus = buildOutcome.status,
+                    lastBuildSummary = buildOutcome.summary,
+                    problems = combinedProblems
+                )
+            }
+
+            if (buildOutcome.status == BuildStatus.SUCCESS) {
+                buildOutcome.failureSignature?.let { failureMemoryStore.markResolved(project.id, it, parsed.displayMessage) }
+                toolMemoryStore.record(project.id, "build", buildOutcome.summary)
+                setActions(
+                    action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
+                    action(AgentActionType.BUILDING, buildOutcome.summary, ActionStatus.COMPLETED)
+                )
+                return
+            }
+
+            val failureSignature = failureMemoryStore.recordFailure(
+                projectId = project.id,
+                contextText = buildOutcome.failureContext ?: buildOutcome.summary,
                 editedFiles = diffs.map { it.filePath },
                 request = visibleUserInput,
                 memoryContext = buildMemoryContext(project, visibleUserInput)
             )
             setActions(
                 action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
-                action(AgentActionType.VERIFYING, "Integrity validation failed", ActionStatus.FAILED)
+                action(AgentActionType.BUILDING, buildOutcome.summary, ActionStatus.FAILED),
+                action(AgentActionType.ANALYZING_LOGS, "Preparing automatic repair pass", ActionStatus.IN_PROGRESS)
             )
-            if (repairAttempt < 1) {
-                persistSystemMessage(sessionId, "Integrity validation failed, so I am running one automatic repair pass now.")
-                executeAutonomousTurn(
-                    sessionId = sessionId,
-                    visibleUserInput = visibleUserInput,
-                    attachedFiles = (diffs.map { it.filePath } + attachedFiles).distinct(),
-                    repairAttempt = repairAttempt + 1,
-                    repairContext = integrity.summary() + "\n\nFailure signature: $signature"
-                )
+
+            if (repairAttempt >= 1) {
+                persistSystemMessage(sessionId, "Automatic validation failed after the repair pass. Review the latest build logs and problems pane for the remaining issue.")
+                return
             }
-            return
-        }
 
-        if (!parsed.shouldBuild) {
-            setActions(action(AgentActionType.VERIFYING, "Integrity validation passed", ActionStatus.COMPLETED))
-            return
-        }
-
-        val buildProfile = buildProfileManager.loadProfile(project.id)
-        val buildOutcome = runValidationBuild(project, buildProfile)
-        val combinedProblems = integrityProblems + buildOutcome.problems
-        problemsService.replace(project.id, combinedProblems)
-        _uiState.update {
-            it.copy(
-                lastBuildStatus = buildOutcome.status,
-                lastBuildSummary = buildOutcome.summary,
-                problems = combinedProblems
+            persistSystemMessage(sessionId, "Build validation failed, so I am running one automatic repair pass now.")
+            executeAutonomousTurn(
+                sessionId = sessionId,
+                visibleUserInput = visibleUserInput,
+                attachedFiles = (diffs.map { it.filePath } + attachedFiles).distinct(),
+                repairAttempt = repairAttempt + 1,
+                repairContext = (buildOutcome.failureContext ?: buildOutcome.summary) + "\n\nFailure signature: $failureSignature"
             )
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            finishWithError(sessionId, e.toAgentFailureMessage())
         }
-
-        if (buildOutcome.status == BuildStatus.SUCCESS) {
-            buildOutcome.failureSignature?.let { failureMemoryStore.markResolved(project.id, it, parsed.displayMessage) }
-            toolMemoryStore.record(project.id, "build", buildOutcome.summary)
-            setActions(
-                action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
-                action(AgentActionType.BUILDING, buildOutcome.summary, ActionStatus.COMPLETED)
-            )
-            return
-        }
-
-        val failureSignature = failureMemoryStore.recordFailure(
-            projectId = project.id,
-            contextText = buildOutcome.failureContext ?: buildOutcome.summary,
-            editedFiles = diffs.map { it.filePath },
-            request = visibleUserInput,
-            memoryContext = buildMemoryContext(project, visibleUserInput)
-        )
-        setActions(
-            action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
-            action(AgentActionType.BUILDING, buildOutcome.summary, ActionStatus.FAILED),
-            action(AgentActionType.ANALYZING_LOGS, "Preparing automatic repair pass", ActionStatus.IN_PROGRESS)
-        )
-
-        if (repairAttempt >= 1) {
-            persistSystemMessage(sessionId, "Automatic validation failed after the repair pass. Review the latest build logs and problems pane for the remaining issue.")
-            return
-        }
-
-        persistSystemMessage(sessionId, "Build validation failed, so I am running one automatic repair pass now.")
-        executeAutonomousTurn(
-            sessionId = sessionId,
-            visibleUserInput = visibleUserInput,
-            attachedFiles = (diffs.map { it.filePath } + attachedFiles).distinct(),
-            repairAttempt = repairAttempt + 1,
-            repairContext = (buildOutcome.failureContext ?: buildOutcome.summary) + "\n\nFailure signature: $failureSignature"
-        )
     }
 
     private suspend fun runValidationBuild(project: com.build.buddyai.core.model.Project, buildProfile: BuildProfile): BuildOutcome {
@@ -1059,6 +1089,15 @@ class AgentViewModel @Inject constructor(
                 isStreaming = false,
                 currentActions = listOf(action(AgentActionType.ANALYZING_LOGS, message, ActionStatus.FAILED))
             )
+        }
+    }
+
+    private fun Throwable.toAgentFailureMessage(): String {
+        val detail = message?.trim().orEmpty().ifBlank { this::class.java.simpleName }
+        return when (this) {
+            is NoSuchFieldError, is LinkageError ->
+                "Agent runtime compatibility error ($detail). The operation was stopped safely. Please update to the latest app build."
+            else -> detail.ifBlank { "AI task failed" }
         }
     }
 
