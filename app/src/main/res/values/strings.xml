@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BuildBuddy</string>
+    <string name="app_tagline">Vibe Coding for Android</string>
+
+    <!-- Splash -->
+    <string name="splash_loading">Initializing workspace…</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_welcome_title">Welcome to BuildBuddy</string>
+    <string name="onboarding_welcome_subtitle">Build real Android apps, right from your device</string>
+    <string name="onboarding_create_title">Create Projects</string>
+    <string name="onboarding_create_subtitle">Start with buildable Java/XML templates today and iterate with the AI workspace.</string>
+    <string name="onboarding_ai_title">AI-Powered Coding</string>
+    <string name="onboarding_ai_subtitle">Let the AI agent generate, modify, and fix your code intelligently</string>
+    <string name="onboarding_build_title">Build &amp; Install</string>
+    <string name="onboarding_build_subtitle">Compile APKs on-device and install them directly</string>
+    <string name="onboarding_setup_title">Connect Your AI</string>
+    <string name="onboarding_setup_subtitle">Add an API key from NVIDIA, OpenRouter, or Gemini to enable AI features</string>
+    <string name="onboarding_skip">Skip for now</string>
+    <string name="onboarding_next">Next</string>
+    <string name="onboarding_get_started">Get Started</string>
+    <string name="onboarding_finish">Start Building</string>
+
+    <!-- Home -->
+    <string name="home_title">BuildBuddy</string>
+    <string name="home_empty_title">No projects yet</string>
+    <string name="home_empty_subtitle">Create your first Android app project or import an existing one</string>
+    <string name="home_create_project">New Project</string>
+    <string name="home_import_project">Import Project</string>
+    <string name="home_recent_projects">Recent Projects</string>
+    <string name="home_all_projects">All Projects</string>
+    <string name="home_recent_builds">Recent Builds</string>
+    <string name="home_search_hint">Search projects…</string>
+    <string name="home_sort_name">Name</string>
+    <string name="home_sort_recent">Recent</string>
+    <string name="home_sort_created">Created</string>
+    <string name="home_quick_actions">Quick Actions</string>
+
+    <!-- Project Creation -->
+    <string name="create_project_title">New Project</string>
+    <string name="create_app_name">App Name</string>
+    <string name="create_app_name_hint">My App</string>
+    <string name="create_package_name">Package Name</string>
+    <string name="create_package_name_hint">com.example.myapp</string>
+    <string name="create_language">Language</string>
+    <string name="create_ui_framework">UI Framework</string>
+    <string name="create_min_sdk">Min SDK</string>
+    <string name="create_target_sdk">Target SDK</string>
+    <string name="create_template">Template</string>
+    <string name="create_description">Description (for AI context)</string>
+    <string name="create_description_hint">Describe what your app will do…</string>
+    <string name="create_project_button">Create Project</string>
+    <string name="create_review_title">Review Project</string>
+    <string name="create_validation_name_empty">App name is required</string>
+    <string name="create_validation_name_too_long">App name must be under 50 characters</string>
+    <string name="create_validation_package_empty">Package name is required</string>
+    <string name="create_validation_package_invalid">Invalid package name format</string>
+    <string name="create_template_blank_compose">Blank Compose App</string>
+    <string name="create_template_blank_compose_desc">Empty Jetpack Compose project with Material 3</string>
+    <string name="create_template_blank_views">Blank Views App</string>
+    <string name="create_template_blank_views_desc">Empty project with XML layouts and View system</string>
+    <string name="create_template_single_activity">Single Activity Compose</string>
+    <string name="create_template_single_activity_desc">Compose project with navigation and scaffold</string>
+    <string name="create_template_java_activity">Java Activity App</string>
+    <string name="create_template_java_activity_desc">Basic Java project with AppCompatActivity</string>
+    <string name="create_template_basic_utility">Basic Utility App</string>
+    <string name="create_template_basic_utility_desc">Minimal utility app template</string>
+
+    <!-- Playground -->
+    <string name="playground_overview">Overview</string>
+    <string name="playground_agent">Agent</string>
+    <string name="playground_editor">Editor</string>
+    <string name="playground_files">Files</string>
+    <string name="playground_build">Build</string>
+    <string name="playground_artifacts">Artifacts</string>
+    <string name="playground_workspace">Workspace</string>
+    <string name="playground_dependencies">Dependencies</string>
+
+    <!-- Agent -->
+    <string name="agent_input_hint">Describe what you want to build…</string>
+    <string name="agent_send">Send</string>
+    <string name="agent_stop">Stop</string>
+    <string name="agent_retry">Retry</string>
+    <string name="agent_mode_ask">Ask</string>
+    <string name="agent_mode_plan">Plan</string>
+    <string name="agent_mode_apply">Apply</string>
+    <string name="agent_mode_auto">Auto</string>
+    <string name="agent_attach_files">Attach files</string>
+    <string name="agent_apply_changes">Apply Changes</string>
+    <string name="agent_reject_changes">Reject</string>
+    <string name="agent_review_diff">Review Diff</string>
+    <string name="agent_action_reading">Reading files</string>
+    <string name="agent_action_planning">Planning implementation</string>
+    <string name="agent_action_editing">Editing files</string>
+    <string name="agent_action_generating">Generating code</string>
+    <string name="agent_action_building">Building project</string>
+    <string name="agent_action_analyzing">Analyzing logs</string>
+    <string name="agent_empty_title">AI Agent</string>
+    <string name="agent_empty_subtitle">Describe your app idea or ask for help with your code</string>
+    <string name="agent_no_provider">No AI provider configured</string>
+    <string name="agent_configure_provider">Configure Provider</string>
+
+    <!-- Editor -->
+    <string name="editor_no_file">No file open</string>
+    <string name="editor_open_file">Open a file from the Files tab to start editing</string>
+    <string name="editor_unsaved_changes">Unsaved changes</string>
+    <string name="editor_save">Save</string>
+    <string name="editor_undo">Undo</string>
+    <string name="editor_redo">Redo</string>
+    <string name="editor_search">Search</string>
+    <string name="editor_replace">Replace</string>
+    <string name="editor_search_hint">Search in file…</string>
+    <string name="editor_replace_hint">Replace with…</string>
+    <string name="editor_replace_all">Replace All</string>
+    <string name="editor_modified">Modified</string>
+
+    <!-- Files -->
+    <string name="files_title">Project Files</string>
+    <string name="files_new_file">New File</string>
+    <string name="files_new_folder">New Folder</string>
+    <string name="files_rename">Rename</string>
+    <string name="files_delete">Delete</string>
+    <string name="files_delete_confirm">Are you sure you want to delete \"%1$s\"?</string>
+    <string name="files_create_title">Create File</string>
+    <string name="files_create_folder_title">Create Folder</string>
+    <string name="files_name_hint">File name</string>
+    <string name="files_folder_name_hint">Folder name</string>
+
+    <!-- Build -->
+    <string name="build_title">Build</string>
+    <string name="build_start">Build APK</string>
+    <string name="build_rebuild">Rebuild</string>
+    <string name="build_clean">Clean</string>
+    <string name="build_cancel">Cancel Build</string>
+    <string name="build_status_idle">Ready to build</string>
+    <string name="build_status_validating">Validating project…</string>
+    <string name="build_status_compiling">Compiling sources…</string>
+    <string name="build_status_dexing">Converting to DEX…</string>
+    <string name="build_status_packaging">Packaging APK…</string>
+    <string name="build_status_signing">Signing APK…</string>
+    <string name="build_status_success">Build successful</string>
+    <string name="build_status_failed">Build failed</string>
+    <string name="build_status_cancelled">Build cancelled</string>
+    <string name="build_ask_ai_fix">Ask AI to Fix</string>
+    <string name="build_view_logs">View Logs</string>
+    <string name="build_last_build">Last Build</string>
+    <string name="build_history">Build History</string>
+    <string name="build_no_builds">No builds yet</string>
+    <string name="build_no_builds_subtitle">Build your project to generate an APK</string>
+    <string name="build_duration">Duration: %1$s</string>
+    <string name="build_error_summary">Error Summary</string>
+    <string name="build_unsupported_feature">Unsupported: %1$s</string>
+    <string name="build_compatibility_warning">Compatibility Warning</string>
+
+    <!-- Artifacts -->
+    <string name="artifacts_title">Artifacts</string>
+    <string name="artifacts_empty_title">No artifacts</string>
+    <string name="artifacts_empty_subtitle">Build your project to generate APK artifacts</string>
+    <string name="artifacts_install">Install</string>
+    <string name="artifacts_share">Share</string>
+    <string name="artifacts_delete">Delete</string>
+    <string name="artifacts_size">Size: %1$s</string>
+    <string name="artifacts_version">Version: %1$s</string>
+    <string name="artifacts_package">Package: %1$s</string>
+    <string name="artifacts_built_at">Built: %1$s</string>
+    <string name="artifacts_install_permission_title">Install Permission Required</string>
+    <string name="artifacts_install_permission_message">BuildBuddy needs permission to install apps from unknown sources</string>
+    <string name="artifacts_install_success">App installed successfully</string>
+    <string name="artifacts_open_app">Open App</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_theme_system">System</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_editor">Editor</string>
+    <string name="settings_font_size">Font Size</string>
+    <string name="settings_tab_width">Tab Width</string>
+    <string name="settings_soft_wrap">Soft Wrap</string>
+    <string name="settings_line_numbers">Line Numbers</string>
+    <string name="settings_autosave">Auto-save</string>
+    <string name="settings_ai">AI Assistant</string>
+    <string name="settings_providers">Model Providers</string>
+    <string name="settings_default_model">Default Model</string>
+    <string name="settings_build">Build</string>
+    <string name="settings_build_cache">Build Cache</string>
+    <string name="settings_clear_cache">Clear Cache</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_build_notifications">Build Notifications</string>
+    <string name="settings_privacy">Privacy &amp; Security</string>
+    <string name="settings_clear_data">Clear App Data</string>
+    <string name="settings_export_logs">Export Logs</string>
+    <string name="settings_about">About</string>
+    <string name="settings_version">Version</string>
+    <string name="settings_licenses">Open Source Licenses</string>
+    <string name="settings_workspace">Workspace</string>
+    <string name="settings_storage_used">Storage Used</string>
+
+    <!-- Models -->
+    <string name="models_title">AI Providers</string>
+    <string name="models_add_provider">Add Provider</string>
+    <string name="models_api_key">API Key</string>
+    <string name="models_api_key_hint">Enter your API key</string>
+    <string name="models_test_connection">Test Connection</string>
+    <string name="models_testing">Testing…</string>
+    <string name="models_test_success">Connection successful</string>
+    <string name="models_test_failed">Connection failed: %1$s</string>
+    <string name="models_remove_provider">Remove Provider</string>
+    <string name="models_remove_confirm">Remove this provider and its API key?</string>
+    <string name="models_select_model">Select Model</string>
+    <string name="models_set_default">Set as Default</string>
+    <string name="models_provider_nvidia">NVIDIA</string>
+    <string name="models_provider_openrouter">OpenRouter</string>
+    <string name="models_provider_gemini">Gemini</string>
+    <string name="models_advanced">Advanced Parameters</string>
+    <string name="models_temperature">Temperature</string>
+    <string name="models_max_tokens">Max Tokens</string>
+    <string name="models_top_p">Top P</string>
+    <string name="models_no_providers">No providers configured</string>
+    <string name="models_no_providers_subtitle">Add an AI provider to enable AI features</string>
+
+    <!-- Common -->
+    <string name="action_cancel">Cancel</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="action_save">Save</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_close">Close</string>
+    <string name="action_back">Back</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_more">More</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_copy">Copy</string>
+    <string name="common_copied">Copied to clipboard</string>
+    <string name="error_generic">Something went wrong</string>
+    <string name="error_network">Network error. Check your connection.</string>
+    <string name="error_invalid_key">Invalid API key</string>
+    <string name="error_rate_limit">Rate limited. Please wait and try again.</string>
+    <string name="loading">Loading…</string>
+</resources>
