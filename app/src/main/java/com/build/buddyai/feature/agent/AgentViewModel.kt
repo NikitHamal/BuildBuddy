@@ -10,6 +10,7 @@ import com.build.buddyai.core.agent.AgentReviewPolicy
 import com.build.buddyai.core.agent.AgentContextAssembler
 import com.build.buddyai.core.agent.AgentExecutionPlan
 import com.build.buddyai.core.agent.AgentTaskProtocol
+import com.build.buddyai.core.agent.TextDiffEngine
 import com.build.buddyai.core.agent.ProjectFailureMemoryStore
 import com.build.buddyai.core.agent.ParsedAgentResponse
 import com.build.buddyai.core.agent.ProjectIntegrityChecker
@@ -120,6 +121,7 @@ class AgentViewModel @Inject constructor(
     private val streamingService: AiStreamingService,
     private val snapshotManager: SnapshotManager,
     private val contextAssembler: AgentContextAssembler,
+    private val textDiffEngine: TextDiffEngine,
     private val changeSetManager: AgentChangeSetManager,
     private val failureMemoryStore: ProjectFailureMemoryStore,
     private val toolMemoryStore: AgentToolMemoryStore,
@@ -131,6 +133,12 @@ class AgentViewModel @Inject constructor(
     private val problemsService: ProjectProblemsService,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
+    companion object {
+        private const val MAX_AUTOMATIC_REPAIR_PASSES = 2
+        private const val MAX_HISTORY_MESSAGES = 60
+        private const val MAX_SUMMARY_LINES = 24
+        private const val MAX_DIFF_PREVIEW_LINES = 90
+    }
 
     private val _uiState = MutableStateFlow(AgentUiState())
     val uiState: StateFlow<AgentUiState> = _uiState.asStateFlow()
@@ -593,7 +601,8 @@ class AgentViewModel @Inject constructor(
                         parsed = parsed,
                         visibleUserInput = visibleUserInput,
                         attachedFiles = attachedFiles,
-                        repairAttempt = repairAttempt
+                        repairAttempt = repairAttempt,
+                        projectDir = projectDir
                     )
                 )
             }
@@ -660,7 +669,8 @@ class AgentViewModel @Inject constructor(
         parsed: ParsedAgentResponse,
         visibleUserInput: String,
         attachedFiles: List<String>,
-        repairAttempt: Int
+        repairAttempt: Int,
+        projectDir: File
     ): PendingAgentReview {
         val review = AgentReviewPolicy.decide(
             mode = _uiState.value.autonomyMode,
@@ -670,22 +680,28 @@ class AgentViewModel @Inject constructor(
         )
         val hunks = buildList {
             parsed.writes.forEach { write ->
+                val originalContent = runCatching { FileUtils.readFileContent(projectDir, write.path).orEmpty() }.getOrDefault("")
                 add(
                     ReviewHunkPreview(
                         id = "write:${write.path}",
                         filePath = write.path,
                         title = "Write ${write.path}",
-                        preview = write.content.lineSequence().take(14).joinToString("\n")
+                        preview = renderUnifiedPreview(write.path, originalContent, write.content)
                     )
                 )
             }
             parsed.deletes.forEach { deletePath ->
+                val originalContent = runCatching { FileUtils.readFileContent(projectDir, deletePath).orEmpty() }.getOrDefault("")
                 add(
                     ReviewHunkPreview(
                         id = "delete:$deletePath",
                         filePath = deletePath,
                         title = "Delete $deletePath",
-                        preview = "This file or directory will be removed from the project."
+                        preview = if (originalContent.isNotBlank()) {
+                            renderUnifiedPreview(deletePath, originalContent, "")
+                        } else {
+                            "This file or directory will be removed from the project."
+                        }
                     )
                 )
             }
@@ -743,6 +759,26 @@ class AgentViewModel @Inject constructor(
         )
     }
 
+    private fun renderUnifiedPreview(filePath: String, originalContent: String, modifiedContent: String): String {
+        val hunks = textDiffEngine.createHunks(originalContent, modifiedContent, contextLines = 2)
+        if (hunks.isEmpty()) return "No textual changes detected."
+        val lines = mutableListOf<String>()
+        lines += "--- a/$filePath"
+        lines += "+++ b/$filePath"
+        hunks.forEach { hunk ->
+            lines += hunk.header
+            hunk.lines.forEach { line ->
+                val prefix = when (line.type) {
+                    TextDiffEngine.DiffLine.Type.CONTEXT -> " "
+                    TextDiffEngine.DiffLine.Type.ADDED -> "+"
+                    TextDiffEngine.DiffLine.Type.REMOVED -> "-"
+                }
+                lines += "$prefix${line.text}"
+            }
+        }
+        return lines.take(MAX_DIFF_PREVIEW_LINES).joinToString("\n")
+    }
+
     private suspend fun applyTurnChanges(
         sessionId: String,
         parsed: ParsedAgentResponse,
@@ -794,8 +830,9 @@ class AgentViewModel @Inject constructor(
                     action(AgentActionType.EDITING_FILE, "Applied ${diffs.size} file change(s)", ActionStatus.COMPLETED),
                     action(AgentActionType.VERIFYING, "Integrity validation failed", ActionStatus.FAILED)
                 )
-                if (repairAttempt < 1) {
-                    persistSystemMessage(sessionId, "Integrity validation failed, so I am running one automatic repair pass now.")
+                if (repairAttempt < MAX_AUTOMATIC_REPAIR_PASSES) {
+                    val passNumber = repairAttempt + 1
+                    persistSystemMessage(sessionId, "Integrity validation failed, so I am running automatic repair pass $passNumber of $MAX_AUTOMATIC_REPAIR_PASSES.")
                     executeAutonomousTurn(
                         sessionId = sessionId,
                         visibleUserInput = visibleUserInput,
@@ -847,12 +884,13 @@ class AgentViewModel @Inject constructor(
                 action(AgentActionType.ANALYZING_LOGS, "Preparing automatic repair pass", ActionStatus.IN_PROGRESS)
             )
 
-            if (repairAttempt >= 1) {
+            if (repairAttempt >= MAX_AUTOMATIC_REPAIR_PASSES) {
                 persistSystemMessage(sessionId, "Automatic validation failed after the repair pass. Review the latest build logs and problems pane for the remaining issue.")
                 return
             }
 
-            persistSystemMessage(sessionId, "Build validation failed, so I am running one automatic repair pass now.")
+            val passNumber = repairAttempt + 1
+            persistSystemMessage(sessionId, "Build validation failed, so I am running automatic repair pass $passNumber of $MAX_AUTOMATIC_REPAIR_PASSES.")
             executeAutonomousTurn(
                 sessionId = sessionId,
                 visibleUserInput = visibleUserInput,
@@ -1113,13 +1151,47 @@ class AgentViewModel @Inject constructor(
     private fun dynamicContextBudget(modelId: String, liveContextWindow: Int? = null): Int {
         val modelInfo = ModelMetadataRegistry.getModelInfo(modelId)
         val contextWindow = liveContextWindow ?: modelInfo?.contextWindow ?: 32_768
-        return (contextWindow * 3).coerceIn(40_000, 300_000)
+        return (contextWindow * 4).coerceIn(40_000, 300_000)
     }
 
-    private fun dynamicHistoryBudget(modelId: String, liveContextWindow: Int? = null): Int {
+    private fun dynamicHistoryTokenBudget(modelId: String, liveContextWindow: Int? = null): Int {
         val modelInfo = ModelMetadataRegistry.getModelInfo(modelId)
         val contextWindow = liveContextWindow ?: modelInfo?.contextWindow ?: 32_768
-        return (contextWindow * 2).coerceIn(8_000, 120_000)
+        val reserveForOutput = (contextWindow * 0.4f).toInt().coerceAtLeast(1_200)
+        return (contextWindow - reserveForOutput).coerceIn(1_600, 96_000)
+    }
+
+    private fun estimateTokens(text: String): Int {
+        if (text.isBlank()) return 0
+        val chars = text.length
+        val words = text.count { it == ' ' || it == '\n' || it == '\t' } + 1
+        return (chars / 4 + words / 3).coerceAtLeast(1)
+    }
+
+    private fun estimateMessageTokens(message: ChatMessage): Int {
+        val explicit = message.tokenCount ?: 0
+        val contentTokens = estimateTokens(message.content)
+        val attachmentTokens = message.attachedFiles.size * 180
+        return (explicit.coerceAtLeast(contentTokens) + attachmentTokens + 16)
+    }
+
+    private fun summarizeTruncatedHistory(messages: List<ChatMessage>): String {
+        if (messages.isEmpty()) return ""
+        val summaryLines = mutableListOf<String>()
+        var consumed = 0
+        messages.takeLast(MAX_HISTORY_MESSAGES).forEach { message ->
+            val prefix = when (message.role) {
+                MessageRole.USER -> "User"
+                MessageRole.ASSISTANT -> "Assistant"
+                MessageRole.SYSTEM -> "System"
+            }
+            val line = "$prefix: ${message.content.lineSequence().firstOrNull().orEmpty().trim()}".trim()
+            if (line.length < 10) return@forEach
+            if (consumed + line.length > 2_400 || summaryLines.size >= MAX_SUMMARY_LINES) return@forEach
+            summaryLines += line.take(200)
+            consumed += line.length
+        }
+        return summaryLines.joinToString("\n")
     }
 
     private suspend fun persistSystemMessage(sessionId: String, content: String) {
@@ -1143,14 +1215,29 @@ class AgentViewModel @Inject constructor(
     ): List<AiChatMessage> = buildList {
         add(AiChatMessage(role = "system", text = systemPrompt))
 
-        val historyBudget = dynamicHistoryBudget(modelId, liveContextWindow)
+        val historyBudgetTokens = dynamicHistoryTokenBudget(modelId, liveContextWindow)
         val selected = ArrayDeque<ChatMessage>()
-        var consumed = 0
+        val truncated = ArrayDeque<ChatMessage>()
+        var consumedTokens = estimateTokens(systemPrompt) + estimateTokens(turnPrompt)
+        var truncating = false
         _uiState.value.messages.asReversed().forEach { message ->
-            val estimatedCost = message.content.length + (message.attachedFiles.size * 256) + 64
-            if (selected.size >= 48 || consumed + estimatedCost > historyBudget) return@forEach
+            val estimatedCost = estimateMessageTokens(message)
+            if (truncating || selected.size >= MAX_HISTORY_MESSAGES || consumedTokens + estimatedCost > historyBudgetTokens) {
+                truncating = true
+                truncated.addFirst(message)
+                return@forEach
+            }
             selected.addFirst(message)
-            consumed += estimatedCost
+            consumedTokens += estimatedCost
+        }
+
+        summarizeTruncatedHistory(truncated.toList()).takeIf { it.isNotBlank() }?.let { summary ->
+            add(
+                AiChatMessage(
+                    role = "system",
+                    text = "Conversation summary for earlier turns (compressed to fit context):\n$summary"
+                )
+            )
         }
 
         selected.forEach { message ->
@@ -1159,7 +1246,7 @@ class AgentViewModel @Inject constructor(
                     role = when (message.role) {
                         MessageRole.USER -> "user"
                         MessageRole.ASSISTANT -> "assistant"
-                        MessageRole.SYSTEM -> "assistant"
+                        MessageRole.SYSTEM -> "system"
                     },
                     text = message.content,
                     imagePaths = message.attachedFiles.filter { isImageAttachment(it) }
