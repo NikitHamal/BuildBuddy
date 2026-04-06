@@ -934,8 +934,8 @@ class AgentViewModel @Inject constructor(
         projectDir: File,
         project: com.build.buddyai.core.model.Project
     ) {
+        val effectiveExecutionId = executionId ?: activeExecutionId
         try {
-            val effectiveExecutionId = executionId ?: activeExecutionId
             if (effectiveExecutionId != null) {
                 checkpointExecution(executionId = effectiveExecutionId, phase = AgentTurnExecutionPhase.APPLYING_CHANGES, owner = owner)
             }
