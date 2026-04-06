@@ -134,7 +134,7 @@ class AgentViewModel @Inject constructor(
     @ApplicationContext private val context: Context
 ) : ViewModel() {
     companion object {
-        private const val MAX_AUTOMATIC_REPAIR_PASSES = 2
+        private const val MAX_AUTOMATIC_REPAIR_PASSES = 4
         private const val MAX_HISTORY_MESSAGES = 60
         private const val MAX_SUMMARY_LINES = 24
         private const val MAX_DIFF_PREVIEW_LINES = 90
@@ -831,14 +831,29 @@ class AgentViewModel @Inject constructor(
                     action(AgentActionType.VERIFYING, "Integrity validation failed", ActionStatus.FAILED)
                 )
                 if (repairAttempt < MAX_AUTOMATIC_REPAIR_PASSES) {
-                    val passNumber = repairAttempt + 1
-                    persistSystemMessage(sessionId, "Integrity validation failed, so I am running automatic repair pass $passNumber of $MAX_AUTOMATIC_REPAIR_PASSES.")
+                    val nextAttempt = repairAttempt + 1
+                    val strategy = repairStrategyForAttempt(nextAttempt)
+                    persistSystemMessage(
+                        sessionId,
+                        "Integrity validation failed. Running automatic repair pass $nextAttempt of $MAX_AUTOMATIC_REPAIR_PASSES using ${strategy.label} strategy."
+                    )
                     executeAutonomousTurn(
                         sessionId = sessionId,
                         visibleUserInput = visibleUserInput,
                         attachedFiles = (diffs.map { it.filePath } + attachedFiles).distinct(),
-                        repairAttempt = repairAttempt + 1,
-                        repairContext = integrity.summary() + "\n\nFailure signature: $signature"
+                        repairAttempt = nextAttempt,
+                        repairContext = composeRepairContext(
+                            baseContext = integrity.summary(),
+                            failureSignature = signature,
+                            attemptNumber = nextAttempt,
+                            strategy = strategy,
+                            failureType = "integrity"
+                        )
+                    )
+                } else {
+                    persistSystemMessage(
+                        sessionId,
+                        "Integrity repair attempts are exhausted after $MAX_AUTOMATIC_REPAIR_PASSES passes. Reply with your priority (fast compile, minimal code churn, or aggressive refactor), and I will continue with that strategy."
                     )
                 }
                 return
@@ -885,18 +900,31 @@ class AgentViewModel @Inject constructor(
             )
 
             if (repairAttempt >= MAX_AUTOMATIC_REPAIR_PASSES) {
-                persistSystemMessage(sessionId, "Automatic validation failed after the repair pass. Review the latest build logs and problems pane for the remaining issue.")
+                persistSystemMessage(
+                    sessionId,
+                    "Automatic repair attempts are exhausted after $MAX_AUTOMATIC_REPAIR_PASSES passes. Reply with your priority (fast compile, minimal code churn, or aggressive refactor), and I will continue with that strategy."
+                )
                 return
             }
 
-            val passNumber = repairAttempt + 1
-            persistSystemMessage(sessionId, "Build validation failed, so I am running automatic repair pass $passNumber of $MAX_AUTOMATIC_REPAIR_PASSES.")
+            val nextAttempt = repairAttempt + 1
+            val strategy = repairStrategyForAttempt(nextAttempt)
+            persistSystemMessage(
+                sessionId,
+                "Build validation failed. Running automatic repair pass $nextAttempt of $MAX_AUTOMATIC_REPAIR_PASSES using ${strategy.label} strategy."
+            )
             executeAutonomousTurn(
                 sessionId = sessionId,
                 visibleUserInput = visibleUserInput,
                 attachedFiles = (diffs.map { it.filePath } + attachedFiles).distinct(),
-                repairAttempt = repairAttempt + 1,
-                repairContext = (buildOutcome.failureContext ?: buildOutcome.summary) + "\n\nFailure signature: $failureSignature"
+                repairAttempt = nextAttempt,
+                repairContext = composeRepairContext(
+                    baseContext = buildOutcome.failureContext ?: buildOutcome.summary,
+                    failureSignature = failureSignature,
+                    attemptNumber = nextAttempt,
+                    strategy = strategy,
+                    failureType = "build"
+                )
             )
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
@@ -1309,6 +1337,44 @@ class AgentViewModel @Inject constructor(
         val normalized = input.lowercase()
         return listOf("build", "create", "make", "generate", "app", "screen", "ui", "ux").count { it in normalized } >= 2
     }
+
+    private data class RepairStrategy(val label: String, val instructions: String)
+
+    private fun repairStrategyForAttempt(attemptNumber: Int): RepairStrategy = when (attemptNumber) {
+        1 -> RepairStrategy(
+            label = "conservative",
+            instructions = "Use minimal, surgical edits first. Prioritize obvious compile errors, unresolved symbols, and XML/resource mismatches. Avoid broad refactors."
+        )
+        2 -> RepairStrategy(
+            label = "targeted",
+            instructions = "Address dependency chains and related files together. If the same failure persists, change approach from pass 1 and adjust the nearest build/config edges."
+        )
+        3 -> RepairStrategy(
+            label = "structural",
+            instructions = "Apply broader structural fixes where needed (API contract alignment, manifest/resource consistency, build config coherence) while preserving behavior."
+        )
+        else -> RepairStrategy(
+            label = "aggressive",
+            instructions = "Use decisive recovery: rewrite problematic sections or affected files end-to-end if necessary, then re-validate assumptions against current errors."
+        )
+    }
+
+    private fun composeRepairContext(
+        baseContext: String,
+        failureSignature: String,
+        attemptNumber: Int,
+        strategy: RepairStrategy,
+        failureType: String
+    ): String = buildString {
+        appendLine(baseContext)
+        appendLine()
+        appendLine("Failure signature: $failureSignature")
+        appendLine("Failure type: $failureType")
+        appendLine("Autonomous repair pass: $attemptNumber of $MAX_AUTOMATIC_REPAIR_PASSES")
+        appendLine("Strategy: ${strategy.label}")
+        appendLine("Instructions: ${strategy.instructions}")
+        appendLine("Do not repeat the exact same patch pattern from earlier failed passes.")
+    }.trim()
 
     private fun action(
         type: AgentActionType,
