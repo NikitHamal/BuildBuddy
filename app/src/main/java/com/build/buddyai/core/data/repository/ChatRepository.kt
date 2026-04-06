@@ -39,6 +39,19 @@ class ChatRepository @Inject constructor(
             }
         }
 
+    suspend fun getMessagesBySessionNow(sessionId: String): List<ChatMessage> =
+        chatDao.getMessagesBySessionNow(sessionId).map { e ->
+            ChatMessage(
+                id = e.id, sessionId = e.sessionId,
+                role = MessageRole.valueOf(e.role),
+                content = e.content, timestamp = e.timestamp,
+                status = MessageStatus.valueOf(e.status),
+                actions = deserializeActions(e.actionsJson),
+                attachedFiles = deserializeFiles(e.attachedFilesJson),
+                modelId = e.modelId, tokenCount = e.tokenCount
+            )
+        }
+
     suspend fun createSession(session: ChatSession) {
         chatDao.insertSession(
             ChatSessionEntity(

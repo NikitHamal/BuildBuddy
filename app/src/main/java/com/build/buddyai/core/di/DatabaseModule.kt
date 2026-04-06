@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Room
 import com.build.buddyai.core.data.local.BuildBuddyDatabase
 import com.build.buddyai.core.data.local.MIGRATION_1_2
+import com.build.buddyai.core.data.local.MIGRATION_2_3
+import com.build.buddyai.core.data.local.dao.AgentTurnExecutionDao
 import com.build.buddyai.core.data.local.dao.ArtifactDao
 import com.build.buddyai.core.data.local.dao.BuildRecordDao
 import com.build.buddyai.core.data.local.dao.ChatDao
@@ -28,11 +30,12 @@ object DatabaseModule {
             BuildBuddyDatabase::class.java,
             "buildbuddy.db"
         )
-            .addMigrations(MIGRATION_1_2)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
             .fallbackToDestructiveMigration()
             .build()
     }
 
+    @Provides fun provideAgentTurnExecutionDao(db: BuildBuddyDatabase): AgentTurnExecutionDao = db.agentTurnExecutionDao()
     @Provides fun provideProjectDao(db: BuildBuddyDatabase): ProjectDao = db.projectDao()
     @Provides fun provideBuildRecordDao(db: BuildBuddyDatabase): BuildRecordDao = db.buildRecordDao()
     @Provides fun provideChatDao(db: BuildBuddyDatabase): ChatDao = db.chatDao()

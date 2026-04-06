@@ -11,6 +11,9 @@ import com.build.buddyai.core.agent.AgentReviewPolicy
 import com.build.buddyai.core.agent.AgentContextAssembler
 import com.build.buddyai.core.agent.AgentExecutionPlan
 import com.build.buddyai.core.agent.AgentBackgroundExecutionRegistry
+import com.build.buddyai.core.agent.AgentTurnExecutionPhase
+import com.build.buddyai.core.agent.AgentTurnExecutionStatus
+import com.build.buddyai.core.agent.AgentTurnWorkScheduler
 import com.build.buddyai.core.agent.AgentTaskProtocol
 import com.build.buddyai.core.agent.TextDiffEngine
 import com.build.buddyai.core.agent.ProjectFailureMemoryStore
@@ -27,6 +30,7 @@ import com.build.buddyai.core.common.FileUtils
 import com.build.buddyai.core.common.SnapshotManager
 import com.build.buddyai.core.data.datastore.SettingsDataStore
 import com.build.buddyai.core.data.repository.ArtifactRepository
+import com.build.buddyai.core.data.repository.AgentTurnExecutionRepository
 import com.build.buddyai.core.data.repository.BuildRepository
 import com.build.buddyai.core.data.repository.ChatRepository
 import com.build.buddyai.core.data.repository.ProjectRepository
@@ -101,6 +105,7 @@ data class ReviewHunkPreview(
 )
 
 data class PendingAgentReview(
+    val executionId: String?,
     val sessionId: String,
     val summary: String,
     val reasons: List<String>,
@@ -126,6 +131,8 @@ class AgentViewModel @Inject constructor(
     private val snapshotManager: SnapshotManager,
     private val contextAssembler: AgentContextAssembler,
     private val backgroundExecutionRegistry: AgentBackgroundExecutionRegistry,
+    private val agentTurnExecutionRepository: AgentTurnExecutionRepository,
+    private val agentTurnWorkScheduler: AgentTurnWorkScheduler,
     private val textDiffEngine: TextDiffEngine,
     private val changeSetManager: AgentChangeSetManager,
     private val failureMemoryStore: ProjectFailureMemoryStore,
@@ -159,6 +166,8 @@ class AgentViewModel @Inject constructor(
     private var providersJob: Job? = null
     private var notificationsEnabled: Boolean = true
     private var currentProjectName: String = "Project"
+    private var activeExecutionId: String? = null
+    private var executionOwner: String? = null
 
     override fun onCleared() {
         // Keep active agent execution running in background registry even if the screen is destroyed.
@@ -234,6 +243,7 @@ class AgentViewModel @Inject constructor(
                 val session = sessions.firstOrNull()
                 _uiState.update { it.copy(sessionId = session?.id) }
                 observeMessages(session?.id)
+                resumeCheckpointedExecution(session?.id)
             }
         }
     }
@@ -328,6 +338,11 @@ class AgentViewModel @Inject constructor(
         viewModelScope.launch {
             val projectId = currentProjectId ?: return@launch
             val sessionId = state.sessionId ?: createSession(projectId, input.ifBlank { "Image request" })
+            val effectiveInput = input.ifBlank { "Analyze the attached image and help with the project." }
+            val executionId = UUID.randomUUID().toString()
+            val owner = "vm:${UUID.randomUUID()}"
+            activeExecutionId = executionId
+            executionOwner = owner
             chatRepository.insertMessage(
                 ChatMessage(
                     id = UUID.randomUUID().toString(),
@@ -357,13 +372,29 @@ class AgentViewModel @Inject constructor(
                 if (projectDir.exists()) snapshotManager.createSnapshot(project.id, projectDir, "pre_agent")
             }
 
+            agentTurnExecutionRepository.create(
+                AgentTurnExecutionRepository.NewExecution(
+                    id = executionId,
+                    projectId = projectId,
+                    sessionId = sessionId,
+                    userInput = effectiveInput,
+                    attachedFiles = state.attachedFiles,
+                    repairAttempt = 0,
+                    repairContext = null,
+                    owner = owner
+                )
+            )
+            agentTurnWorkScheduler.scheduleWatchdog(executionId)
+
             streamJob?.cancel()
             startAgentForeground(sessionId, "Planning and analyzing request...")
             streamJob = backgroundExecutionRegistry.launch(sessionId) {
                 try {
                     executeAutonomousTurn(
+                        executionId = executionId,
+                        owner = owner,
                         sessionId = sessionId,
-                        visibleUserInput = input.ifBlank { "Analyze the attached image and help with the project." },
+                        visibleUserInput = effectiveInput,
                         attachedFiles = state.attachedFiles,
                         repairAttempt = 0,
                         repairContext = null
@@ -376,6 +407,8 @@ class AgentViewModel @Inject constructor(
     }
 
     private suspend fun executeAutonomousTurn(
+        executionId: String,
+        owner: String,
         sessionId: String,
         visibleUserInput: String,
         attachedFiles: List<String>,
@@ -383,6 +416,12 @@ class AgentViewModel @Inject constructor(
         repairContext: String?
     ) {
         try {
+            checkpointExecution(
+                executionId = executionId,
+                phase = AgentTurnExecutionPhase.CONTEXT_ASSEMBLY,
+                status = AgentTurnExecutionStatus.RUNNING,
+                owner = owner
+            )
             val provider = providerRepository.getDefaultProvider() ?: return finishWithError(sessionId, "No AI provider configured")
             val apiKey = providerRepository.getApiKey(provider.id) ?: return finishWithError(sessionId, "Missing API key")
             val modelId = provider.selectedModelId ?: provider.models.firstOrNull()?.id ?: return finishWithError(sessionId, "No model selected")
@@ -410,6 +449,7 @@ class AgentViewModel @Inject constructor(
                 attachedFiles = attachedFiles
             )
             applyPlanUi(plan)
+            checkpointExecution(executionId = executionId, phase = AgentTurnExecutionPhase.PLANNING)
             toolMemoryStore.record(project.id, "planner", plan?.steps?.joinToString(" • ") ?: "No explicit plan returned", plan?.readFiles.orEmpty())
 
             setActions(
@@ -426,6 +466,7 @@ class AgentViewModel @Inject constructor(
                 status = MessageStatus.STREAMING,
                 modelId = modelId
             )
+            chatRepository.insertMessage(placeholder)
             _uiState.update { state -> state.copy(isStreaming = true, messages = state.messages + placeholder) }
 
             val systemPrompt = buildExecutionSystemPrompt(contextSnapshot.prompt, plan)
@@ -437,7 +478,24 @@ class AgentViewModel @Inject constructor(
                 modelId = modelId,
                 liveContextWindow = modelContextWindow
             )
+            agentTurnExecutionRepository.update(executionId) { current ->
+                current.copy(
+                    providerType = provider.type.name,
+                    providerId = provider.id,
+                    modelId = modelId,
+                    temperature = provider.parameters.temperature,
+                    maxTokens = provider.parameters.maxTokens,
+                    topP = provider.parameters.topP,
+                    requestMessagesJson = agentTurnExecutionRepository.encodeRequestMessages(requestMessages),
+                    planJson = agentTurnExecutionRepository.encodePlan(plan),
+                    assistantMessageId = assistantMsgId,
+                    phase = AgentTurnExecutionPhase.STREAMING.name,
+                    heartbeatAt = System.currentTimeMillis()
+                )
+            }
+            checkpointExecution(executionId = executionId, phase = AgentTurnExecutionPhase.STREAMING)
             val rawContent = streamModelResponse(
+                executionId = executionId,
                 providerType = provider.type,
                 apiKey = apiKey,
                 modelId = modelId,
@@ -450,6 +508,8 @@ class AgentViewModel @Inject constructor(
             )
 
             handleTurnCompletion(
+                executionId = executionId,
+                owner = owner,
                 sessionId = sessionId,
                 assistantMsgId = assistantMsgId,
                 placeholder = placeholder,
@@ -463,6 +523,7 @@ class AgentViewModel @Inject constructor(
             )
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
+            agentTurnExecutionRepository.markFailed(executionId, e.toAgentFailureMessage())
             finishWithError(sessionId, e.toAgentFailureMessage())
         }
     }
@@ -544,6 +605,7 @@ class AgentViewModel @Inject constructor(
     }
 
     private suspend fun streamModelResponse(
+        executionId: String,
         providerType: com.build.buddyai.core.model.ProviderType,
         apiKey: String,
         modelId: String,
@@ -555,6 +617,7 @@ class AgentViewModel @Inject constructor(
         topP: Float
     ): String {
         val contentBuilder = StringBuilder()
+        var lastCheckpointAt = 0L
         streamingService.streamMessage(
             providerType = providerType,
             apiKey = apiKey,
@@ -568,18 +631,39 @@ class AgentViewModel @Inject constructor(
                 is StreamEvent.Token -> {
                     contentBuilder.append(event.content)
                     val updated = placeholder.copy(content = contentBuilder.toString())
+                    chatRepository.insertMessage(updated)
                     _uiState.update { state ->
                         state.copy(messages = state.messages.map { if (it.id == assistantMsgId) updated else it })
+                    }
+                    val now = System.currentTimeMillis()
+                    if (now - lastCheckpointAt >= 900L) {
+                        checkpointExecution(
+                            executionId = executionId,
+                            phase = AgentTurnExecutionPhase.STREAMING,
+                            partialResponse = updated.content.takeLast(120_000),
+                            scheduleWatchdog = false
+                        )
+                        lastCheckpointAt = now
                     }
                 }
                 is StreamEvent.Done -> Unit
                 is StreamEvent.Error -> throw RuntimeException(event.message)
             }
         }
-        return contentBuilder.toString().trim()
+        val raw = contentBuilder.toString().trim()
+        checkpointExecution(
+            executionId = executionId,
+            phase = AgentTurnExecutionPhase.STREAMING,
+            partialResponse = raw.takeLast(120_000),
+            finalRawResponse = raw,
+            scheduleWatchdog = false
+        )
+        return raw
     }
 
     private suspend fun handleTurnCompletion(
+        executionId: String,
+        owner: String,
         sessionId: String,
         assistantMsgId: String,
         placeholder: ChatMessage,
@@ -601,10 +685,19 @@ class AgentViewModel @Inject constructor(
                 currentPlanSteps = parsed.envelope?.plan ?: state.currentPlanSteps
             )
         }
+        checkpointExecution(
+            executionId = executionId,
+            phase = AgentTurnExecutionPhase.APPLYING_CHANGES,
+            finalRawResponse = rawContent,
+            finalDisplayResponse = parsed.displayMessage
+        )
 
         if (!parsed.isTask) {
             clearActions()
             notifyAgentOutcome(success = true, detail = "Assistant response is ready.")
+            agentTurnExecutionRepository.markCompleted(executionId, parsed.displayMessage, rawContent)
+            agentTurnWorkScheduler.cancel(executionId)
+            activeExecutionId = null
             stopAgentForeground()
             return
         }
@@ -619,6 +712,7 @@ class AgentViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     pendingReview = buildPendingReview(
+                        executionId = executionId,
                         sessionId = sessionId,
                         parsed = parsed,
                         visibleUserInput = visibleUserInput,
@@ -633,11 +727,15 @@ class AgentViewModel @Inject constructor(
                 action(AgentActionType.EDITING_FILE, "Waiting for review approval", ActionStatus.IN_PROGRESS)
             )
             notifyAgentOutcome(success = false, detail = "Review approval required before applying staged changes.")
+            agentTurnExecutionRepository.markWaitingReview(executionId, parsed.displayMessage, rawContent)
+            agentTurnWorkScheduler.cancel(executionId)
             stopAgentForeground()
             return
         }
 
         applyTurnChanges(
+            executionId = executionId,
+            owner = owner,
             sessionId = sessionId,
             parsed = parsed,
             visibleUserInput = visibleUserInput,
@@ -652,8 +750,20 @@ class AgentViewModel @Inject constructor(
         val pending = _uiState.value.pendingReview ?: return
         viewModelScope.launch {
             val project = currentProject() ?: return@launch
+            val executionId = pending.executionId
+            val owner = executionOwner ?: "vm:${UUID.randomUUID()}"
+            if (executionId != null) {
+                checkpointExecution(
+                    executionId = executionId,
+                    phase = AgentTurnExecutionPhase.APPLYING_CHANGES,
+                    status = AgentTurnExecutionStatus.RUNNING,
+                    owner = owner
+                )
+            }
             try {
                 applyTurnChanges(
+                    executionId = executionId,
+                    owner = owner,
                     sessionId = pending.sessionId,
                     parsed = filteredReviewPayload(pending),
                     visibleUserInput = pending.visibleUserInput,
@@ -671,8 +781,16 @@ class AgentViewModel @Inject constructor(
     }
 
     fun rejectPendingReview() {
+        val executionId = _uiState.value.pendingReview?.executionId
         _uiState.update { it.copy(pendingReview = null) }
         clearActions()
+        if (executionId != null) {
+            viewModelScope.launch {
+                agentTurnExecutionRepository.markCancelled(executionId, "Review rejected by user")
+                agentTurnWorkScheduler.cancel(executionId)
+            }
+            activeExecutionId = null
+        }
     }
 
     fun toggleReviewHunkAcceptance(hunkId: String) {
@@ -689,6 +807,7 @@ class AgentViewModel @Inject constructor(
     }
 
     private fun buildPendingReview(
+        executionId: String?,
         sessionId: String,
         parsed: ParsedAgentResponse,
         visibleUserInput: String,
@@ -744,6 +863,7 @@ class AgentViewModel @Inject constructor(
             }
         }
         return PendingAgentReview(
+            executionId = executionId,
             sessionId = sessionId,
             summary = parsed.displayMessage,
             reasons = review.reasons,
@@ -804,6 +924,8 @@ class AgentViewModel @Inject constructor(
     }
 
     private suspend fun applyTurnChanges(
+        executionId: String?,
+        owner: String,
         sessionId: String,
         parsed: ParsedAgentResponse,
         visibleUserInput: String,
@@ -813,6 +935,10 @@ class AgentViewModel @Inject constructor(
         project: com.build.buddyai.core.model.Project
     ) {
         try {
+            val effectiveExecutionId = executionId ?: activeExecutionId
+            if (effectiveExecutionId != null) {
+                checkpointExecution(executionId = effectiveExecutionId, phase = AgentTurnExecutionPhase.APPLYING_CHANGES, owner = owner)
+            }
             setActions(
                 action(AgentActionType.EDITING_FILE, "Applying planned changes"),
                 action(AgentActionType.VERIFYING, if (parsed.shouldBuild) "Running integrity and build validation" else "Running integrity validation")
@@ -862,6 +988,8 @@ class AgentViewModel @Inject constructor(
                         "Integrity validation failed. Running automatic repair pass $nextAttempt of $MAX_AUTOMATIC_REPAIR_PASSES using ${strategy.label} strategy."
                     )
                     executeAutonomousTurn(
+                        executionId = effectiveExecutionId ?: UUID.randomUUID().toString(),
+                        owner = owner,
                         sessionId = sessionId,
                         visibleUserInput = visibleUserInput,
                         attachedFiles = (
@@ -883,6 +1011,12 @@ class AgentViewModel @Inject constructor(
                         sessionId,
                         "Integrity repair attempts are exhausted after $MAX_AUTOMATIC_REPAIR_PASSES passes. Reply with your priority (fast compile, minimal code churn, or aggressive refactor), and I will continue with that strategy."
                     )
+                    if (effectiveExecutionId != null) {
+                        agentTurnExecutionRepository.markFailed(
+                            effectiveExecutionId,
+                            "Integrity repair attempts exhausted after $MAX_AUTOMATIC_REPAIR_PASSES passes."
+                        )
+                    }
                     notifyAgentOutcome(success = false, detail = "Integrity repair exhausted after $MAX_AUTOMATIC_REPAIR_PASSES passes.")
                     stopAgentForeground()
                 }
@@ -897,6 +1031,8 @@ class AgentViewModel @Inject constructor(
                     val strategy = repairStrategyForAttempt(nextAttempt)
                     persistSystemMessage(sessionId, "Code builds, but goal coverage looks incomplete: $goalGap")
                     executeAutonomousTurn(
+                        executionId = effectiveExecutionId ?: UUID.randomUUID().toString(),
+                        owner = owner,
                         sessionId = sessionId,
                         visibleUserInput = visibleUserInput,
                         attachedFiles = (
@@ -915,11 +1051,19 @@ class AgentViewModel @Inject constructor(
                     )
                     return
                 }
+                if (effectiveExecutionId != null) {
+                    agentTurnExecutionRepository.markCompleted(effectiveExecutionId, parsed.displayMessage, parsed.rawContent)
+                    agentTurnWorkScheduler.cancel(effectiveExecutionId)
+                    activeExecutionId = null
+                }
                 notifyAgentOutcome(success = true, detail = "Changes applied and integrity checks passed.")
                 stopAgentForeground()
                 return
             }
 
+            if (effectiveExecutionId != null) {
+                checkpointExecution(executionId = effectiveExecutionId, phase = AgentTurnExecutionPhase.VALIDATING)
+            }
             val buildProfile = buildProfileManager.loadProfile(project.id)
             val buildOutcome = runValidationBuild(project, buildProfile)
             val combinedProblems = integrityProblems + buildOutcome.problems
@@ -945,6 +1089,8 @@ class AgentViewModel @Inject constructor(
                     val strategy = repairStrategyForAttempt(nextAttempt)
                     persistSystemMessage(sessionId, "Build passed, but goal coverage looks incomplete: $goalGap")
                     executeAutonomousTurn(
+                        executionId = effectiveExecutionId ?: UUID.randomUUID().toString(),
+                        owner = owner,
                         sessionId = sessionId,
                         visibleUserInput = visibleUserInput,
                         attachedFiles = (
@@ -962,6 +1108,11 @@ class AgentViewModel @Inject constructor(
                         )
                     )
                     return
+                }
+                if (effectiveExecutionId != null) {
+                    agentTurnExecutionRepository.markCompleted(effectiveExecutionId, parsed.displayMessage, parsed.rawContent)
+                    agentTurnWorkScheduler.cancel(effectiveExecutionId)
+                    activeExecutionId = null
                 }
                 notifyAgentOutcome(success = true, detail = buildOutcome.summary)
                 stopAgentForeground()
@@ -986,6 +1137,13 @@ class AgentViewModel @Inject constructor(
                     sessionId,
                     "Automatic repair attempts are exhausted after $MAX_AUTOMATIC_REPAIR_PASSES passes. Reply with your priority (fast compile, minimal code churn, or aggressive refactor), and I will continue with that strategy."
                 )
+                if (effectiveExecutionId != null) {
+                    agentTurnExecutionRepository.markFailed(
+                        effectiveExecutionId,
+                        "Automatic repair attempts exhausted after $MAX_AUTOMATIC_REPAIR_PASSES passes."
+                    )
+                    activeExecutionId = null
+                }
                 notifyAgentOutcome(success = false, detail = "Automatic repair exhausted after $MAX_AUTOMATIC_REPAIR_PASSES passes.")
                 stopAgentForeground()
                 return
@@ -998,6 +1156,8 @@ class AgentViewModel @Inject constructor(
                 "Build validation failed. Running automatic repair pass $nextAttempt of $MAX_AUTOMATIC_REPAIR_PASSES using ${strategy.label} strategy."
             )
             executeAutonomousTurn(
+                executionId = effectiveExecutionId ?: UUID.randomUUID().toString(),
+                owner = owner,
                 sessionId = sessionId,
                 visibleUserInput = visibleUserInput,
                 attachedFiles = (
@@ -1016,6 +1176,9 @@ class AgentViewModel @Inject constructor(
             )
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
+            if (effectiveExecutionId != null) {
+                agentTurnExecutionRepository.markFailed(effectiveExecutionId, e.toAgentFailureMessage())
+            }
             finishWithError(sessionId, e.toAgentFailureMessage())
         }
     }
@@ -1205,6 +1368,7 @@ class AgentViewModel @Inject constructor(
     fun cancelStream() {
         backgroundExecutionRegistry.cancel(_uiState.value.sessionId)
         streamJob?.cancel()
+        val executionId = activeExecutionId
         _uiState.update {
             it.copy(
                 isStreaming = false,
@@ -1217,6 +1381,13 @@ class AgentViewModel @Inject constructor(
         }
         stopAgentForeground()
         notifyAgentOutcome(success = false, detail = "Agent task cancelled.")
+        if (executionId != null) {
+            viewModelScope.launch {
+                agentTurnExecutionRepository.markCancelled(executionId, "Cancelled by user")
+                agentTurnWorkScheduler.cancel(executionId)
+            }
+        }
+        activeExecutionId = null
     }
 
     fun retryLastMessage() {
@@ -1258,6 +1429,11 @@ class AgentViewModel @Inject constructor(
         }
         notifyAgentOutcome(success = false, detail = message.take(180))
         stopAgentForeground()
+        activeExecutionId?.let { executionId ->
+            agentTurnExecutionRepository.markFailed(executionId, message)
+            agentTurnWorkScheduler.cancel(executionId)
+        }
+        activeExecutionId = null
     }
 
     private fun Throwable.toAgentFailureMessage(): String {
@@ -1520,6 +1696,105 @@ class AgentViewModel @Inject constructor(
         appendLine("Instructions: ${strategy.instructions}")
         appendLine("Do not repeat the exact same patch pattern from earlier failed passes.")
     }.trim()
+
+    private suspend fun checkpointExecution(
+        executionId: String,
+        phase: AgentTurnExecutionPhase? = null,
+        status: AgentTurnExecutionStatus? = null,
+        owner: String? = null,
+        partialResponse: String? = null,
+        finalRawResponse: String? = null,
+        finalDisplayResponse: String? = null,
+        scheduleWatchdog: Boolean = true
+    ) {
+        agentTurnExecutionRepository.update(executionId) { current ->
+            current.copy(
+                phase = phase?.name ?: current.phase,
+                status = status?.name ?: current.status,
+                owner = owner ?: current.owner,
+                partialResponse = partialResponse ?: current.partialResponse,
+                finalRawResponse = finalRawResponse ?: current.finalRawResponse,
+                finalDisplayResponse = finalDisplayResponse ?: current.finalDisplayResponse,
+                heartbeatAt = System.currentTimeMillis()
+            )
+        }
+        if (scheduleWatchdog) {
+            agentTurnWorkScheduler.scheduleWatchdog(executionId)
+        }
+    }
+
+    private fun resumeCheckpointedExecution(sessionId: String?) {
+        if (sessionId.isNullOrBlank()) return
+        viewModelScope.launch {
+            val execution = agentTurnExecutionRepository.findLatestActiveForSession(sessionId) ?: return@launch
+            activeExecutionId = execution.id
+            if (execution.status == AgentTurnExecutionStatus.RUNNING.name) {
+                _uiState.update { it.copy(isStreaming = true) }
+                agentTurnWorkScheduler.scheduleWatchdog(execution.id)
+                return@launch
+            }
+            val waitingForManualReview = execution.status == AgentTurnExecutionStatus.WAITING_REVIEW.name &&
+                execution.phase == AgentTurnExecutionPhase.WAITING_FOR_REVIEW.name &&
+                !execution.finalRawResponse.isNullOrBlank()
+            if (waitingForManualReview) {
+                val project = currentProject() ?: return@launch
+                val parsed = AgentTaskProtocol.parse(execution.finalRawResponse.orEmpty())
+                _uiState.update {
+                    it.copy(
+                        isStreaming = false,
+                        pendingReview = buildPendingReview(
+                            executionId = execution.id,
+                            sessionId = execution.sessionId,
+                            parsed = parsed,
+                            visibleUserInput = execution.userInput,
+                            attachedFiles = agentTurnExecutionRepository.decodeAttachedFiles(execution.attachedFilesJson),
+                            repairAttempt = execution.repairAttempt,
+                            projectDir = File(project.projectPath)
+                        )
+                    )
+                }
+                return@launch
+            }
+            val readyForForegroundContinuation = execution.status == AgentTurnExecutionStatus.WAITING_REVIEW.name &&
+                execution.phase == AgentTurnExecutionPhase.APPLYING_CHANGES.name &&
+                !execution.finalRawResponse.isNullOrBlank()
+            if (!readyForForegroundContinuation) return@launch
+
+            val project = currentProject() ?: return@launch
+            val modelId = execution.modelId ?: providerRepository.getDefaultProvider()?.selectedModelId.orEmpty()
+            val assistantId = execution.assistantMessageId ?: UUID.randomUUID().toString()
+            val placeholder = _uiState.value.messages.firstOrNull { it.id == assistantId } ?: ChatMessage(
+                id = assistantId,
+                sessionId = sessionId,
+                role = MessageRole.ASSISTANT,
+                content = execution.partialResponse,
+                status = MessageStatus.STREAMING,
+                modelId = modelId
+            )
+            val owner = "vm:${UUID.randomUUID()}"
+            executionOwner = owner
+            checkpointExecution(
+                executionId = execution.id,
+                phase = AgentTurnExecutionPhase.APPLYING_CHANGES,
+                status = AgentTurnExecutionStatus.RUNNING,
+                owner = owner
+            )
+            handleTurnCompletion(
+                executionId = execution.id,
+                owner = owner,
+                sessionId = sessionId,
+                assistantMsgId = assistantId,
+                placeholder = placeholder,
+                modelId = modelId,
+                rawContent = execution.finalRawResponse.orEmpty(),
+                visibleUserInput = execution.userInput,
+                attachedFiles = agentTurnExecutionRepository.decodeAttachedFiles(execution.attachedFilesJson),
+                repairAttempt = execution.repairAttempt,
+                projectDir = File(project.projectPath),
+                project = project
+            )
+        }
+    }
 
     private fun startAgentForeground(sessionId: String, status: String) {
         context.startForegroundService(

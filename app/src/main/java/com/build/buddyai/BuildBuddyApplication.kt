@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import com.build.buddyai.core.agent.AgentTurnWorkScheduler
 import dagger.hilt.android.HiltAndroidApp
 import timber.log.Timber
 import javax.inject.Inject
@@ -14,6 +15,9 @@ class BuildBuddyApplication : Application(), Configuration.Provider {
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
 
+    @Inject
+    lateinit var agentTurnWorkScheduler: AgentTurnWorkScheduler
+
     override fun onCreate() {
         super.onCreate()
         android.os.Handler(android.os.Looper.getMainLooper()).post {
@@ -21,6 +25,9 @@ class BuildBuddyApplication : Application(), Configuration.Provider {
         }
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
+        }
+        if (this::agentTurnWorkScheduler.isInitialized) {
+            agentTurnWorkScheduler.scheduleBootstrapResume()
         }
     }
 
