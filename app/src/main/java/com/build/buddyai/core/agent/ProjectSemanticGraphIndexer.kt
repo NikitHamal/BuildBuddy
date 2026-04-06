@@ -117,15 +117,15 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
         val manifestFile = File(projectDir, "app/src/main/AndroidManifest.xml")
         val manifestText = if (manifestFile.exists()) readTextCached(manifestFile) else ""
         val manifest = ManifestIndex(
-            packageName = Regex("""package\s*=\s*[\"']([^\"']+)[\"']""").find(manifestText)?.groupValues?.get(1).orEmpty(),
+            packageName = MANIFEST_PACKAGE_REGEX.find(manifestText)?.groupValues?.get(1).orEmpty(),
             components = buildList {
-                listOf("activity", "service", "receiver", "provider", "application").forEach { kind ->
-                    Regex("""<$kind[^>]+android:name=[\"']([^\"']+)[\"']""")
-                        .findAll(manifestText)
-                        .forEach { add(ManifestComponent(kind, it.groupValues[1])) }
+                MANIFEST_COMPONENT_KINDS.forEach { kind ->
+                    MANIFEST_COMPONENT_REGEXES[kind]?.findAll(manifestText)?.forEach {
+                        add(ManifestComponent(kind, it.groupValues[1]))
+                    }
                 }
             },
-            placeholders = Regex("""\$\{([A-Za-z0-9_.-]+)\}""").findAll(manifestText).map { it.groupValues[1] }.distinct().toList()
+            placeholders = MANIFEST_PLACEHOLDER_REGEX.findAll(manifestText).map { it.groupValues[1] }.distinct().toList()
         )
 
         val resFiles = files.filter { it.relativeTo(projectDir).invariantSeparatorsPath.startsWith("app/src/main/res/") }
@@ -136,12 +136,12 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
 
         val resources = ResourceIndex(
             layouts = layoutFiles.map { it.nameWithoutExtension }.distinct(),
-            strings = valuesFiles.flatMap { file -> Regex("""<string\s+name=[\"']([^\"']+)[\"']""").findAll(allXmlText[file].orEmpty()).map { it.groupValues[1] }.toList() }.distinct(),
+            strings = valuesFiles.flatMap { file -> XML_STRING_REGEX.findAll(allXmlText[file].orEmpty()).map { it.groupValues[1] }.toList() }.distinct(),
             drawables = drawableFiles.map { it.nameWithoutExtension }.distinct(),
-            viewIds = layoutFiles.flatMap { file -> Regex("""android:id=[\"']@\+id/([^\"']+)[\"']""").findAll(allXmlText[file].orEmpty()).map { it.groupValues[1] }.toList() }.distinct(),
+            viewIds = layoutFiles.flatMap { file -> XML_VIEW_ID_REGEX.findAll(allXmlText[file].orEmpty()).map { it.groupValues[1] }.toList() }.distinct(),
             stringReferences = files.filter { it.extension.lowercase() in setOf("kt", "java", "xml") }.flatMap { file ->
                 val text = readTextCached(file)
-                Regex("""R\.string\.([A-Za-z0-9_]+)|@string/([A-Za-z0-9_]+)""").findAll(text)
+                STRING_REF_REGEX.findAll(text)
                     .mapNotNull { match -> match.groupValues.drop(1).firstOrNull { it.isNotBlank() } }
                     .toList()
             }.distinct()
@@ -150,7 +150,7 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
         val resourceOwnership = buildList {
             layoutFiles.forEach { add(ResourceOwner("layout", it.nameWithoutExtension, it.relativeTo(projectDir).invariantSeparatorsPath)) }
             valuesFiles.forEach { file ->
-                Regex("""<string\s+name=[\"']([^\"']+)[\"']""").findAll(allXmlText[file].orEmpty()).forEach {
+                XML_STRING_REGEX.findAll(allXmlText[file].orEmpty()).forEach {
                     add(ResourceOwner("string", it.groupValues[1], file.relativeTo(projectDir).invariantSeparatorsPath))
                 }
             }
@@ -159,8 +159,7 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
         val dependencies = modules.flatMap { module ->
             val buildFile = File(projectDir, module.buildFile)
             val text = readTextCached(buildFile)
-            Regex("""\b(implementation|api|ksp|kapt|compileOnly|runtimeOnly|testImplementation|androidTestImplementation|debugImplementation|releaseImplementation)\s*\(([^\n]+)\)""")
-                .findAll(text)
+            DEPENDENCY_REGEX.findAll(text)
                 .map { DependencyNode(it.groupValues[1], it.groupValues[2].trim(), module.buildFile) }
                 .toList()
         }
@@ -168,13 +167,11 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
         val apis = files.filter { it.extension.lowercase() in setOf("kt", "java") }.flatMap { file ->
             val relative = file.relativeTo(projectDir).invariantSeparatorsPath
             val text = readTextCached(file)
-            val packageName = Regex("""package\s+([A-Za-z0-9_.]+)""").find(text)?.groupValues?.get(1).orEmpty()
-            val types = Regex("""\b(class|interface|object|enum\s+class)\s+([A-Za-z0-9_]+)""")
-                .findAll(text)
+            val packageName = KT_PACKAGE_REGEX.find(text)?.groupValues?.get(1).orEmpty()
+            val types = KT_TYPES_REGEX.findAll(text)
                 .map { ApiNode(kind = it.groupValues[1], qualifiedName = listOf(packageName, it.groupValues[2]).filter { s -> s.isNotBlank() }.joinToString("."), filePath = relative) }
                 .toList()
-            val functions = Regex("""\bfun\s+([A-Za-z0-9_]+)\s*\(|\b(public|private|protected)?\s*(static\s+)?[A-Za-z0-9_<>,?\[\] ]+\s+([A-Za-z0-9_]+)\s*\(""")
-                .findAll(text)
+            val functions = KT_FUNCTIONS_REGEX.findAll(text)
                 .mapNotNull { match -> match.groupValues[1].ifBlank { match.groupValues[4] }.takeIf { it.isNotBlank() } }
                 .filterNot { it in setOf("if", "for", "while", "switch") }
                 .map { ApiNode(kind = "member", qualifiedName = listOf(packageName, it).filter { s -> s.isNotBlank() }.joinToString("."), filePath = relative) }
@@ -184,7 +181,7 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
 
         val packageOwnership = files.filter { it.extension.lowercase() in setOf("kt", "java") }.mapNotNull { file ->
             val text = readTextCached(file)
-            val packageName = Regex("""package\s+([A-Za-z0-9_.]+)""").find(text)?.groupValues?.get(1) ?: return@mapNotNull null
+            val packageName = KT_PACKAGE_REGEX.find(text)?.groupValues?.get(1) ?: return@mapNotNull null
             val rootPath = file.parentFile?.relativeTo(projectDir)?.invariantSeparatorsPath.orEmpty()
             PackageOwnership(packageName, rootPath)
         }.distinctBy { it.packageName to it.rootPath }
@@ -193,23 +190,19 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
             files.filter { it.extension.lowercase() == "xml" || it.extension.lowercase() == "kt" || it.extension.lowercase() == "java" }.forEach { file ->
                 val relative = file.relativeTo(projectDir).invariantSeparatorsPath
                 val text = readTextCached(file)
-                Regex("""<fragment[^>]+android:id=[\"']@\+id/([^\"']+)[\"'][^>]+android:name=[\"']([^\"']+)[\"']""")
-                    .findAll(text)
+                NAV_FRAGMENT_REGEX.findAll(text)
                     .forEach { add(NavigationNode("fragment", "${it.groupValues[1]} -> ${it.groupValues[2]}", relative)) }
-                Regex("""composable\s*\(\s*route\s*=\s*[\"']([^\"']+)[\"']""")
-                    .findAll(text)
+                NAV_COMPOSE_REGEX.findAll(text)
                     .forEach { add(NavigationNode("compose-route", it.groupValues[1], relative)) }
-                Regex("""findNavController\(\)\.navigate\([\"']([^\"']+)[\"']\)""")
-                    .findAll(text)
+                NAV_NAVIGATE_REGEX.findAll(text)
                     .forEach { add(NavigationNode("navigate-call", it.groupValues[1], relative)) }
-                Regex("""startActivity\([^\n]+([A-Za-z0-9_]+)::class\.java""")
-                    .findAll(text)
+                NAV_ACTIVITY_REGEX.findAll(text)
                     .forEach { add(NavigationNode("activity-launch", it.groupValues[1], relative)) }
             }
             manifest.components.forEach { add(NavigationNode(it.kind, it.name, "app/src/main/AndroidManifest.xml")) }
         }.distinctBy { Triple(it.kind, it.name, it.filePath) }
 
-        val focusTokens = focusHint.lowercase().split(Regex("[^a-z0-9_./]+"))
+        val focusTokens = focusHint.lowercase().split(FOCUS_SPLIT_REGEX)
             .filter { it.length >= 3 }
             .distinct()
 
@@ -251,5 +244,26 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
             relative.startsWith("app/build/") ||
             relative.startsWith("artifacts/") ||
             relative.startsWith("snapshots/")
+    }
+
+    companion object {
+        private val MANIFEST_PACKAGE_REGEX = Regex("""package\s*=\s*[\"']([^\"']+)[\"']""")
+        private val MANIFEST_PLACEHOLDER_REGEX = Regex("""\$\{([A-Za-z0-9_.-]+)\}""")
+        private val MANIFEST_COMPONENT_KINDS = listOf("activity", "service", "receiver", "provider", "application")
+        private val MANIFEST_COMPONENT_REGEXES = MANIFEST_COMPONENT_KINDS.associateWith { kind ->
+            Regex("""<$kind[^>]+android:name=[\"']([^\"']+)[\"']""")
+        }
+        private val XML_STRING_REGEX = Regex("""<string\s+name=[\"']([^\"']+)[\"']""")
+        private val XML_VIEW_ID_REGEX = Regex("""android:id=[\"']@\+id/([^\"']+)[\"']""")
+        private val STRING_REF_REGEX = Regex("""R\.string\.([A-Za-z0-9_]+)|@string/([A-Za-z0-9_]+)""")
+        private val DEPENDENCY_REGEX = Regex("""\b(implementation|api|ksp|kapt|compileOnly|runtimeOnly|testImplementation|androidTestImplementation|debugImplementation|releaseImplementation)\s*\(([^\n]+)\)""")
+        private val KT_PACKAGE_REGEX = Regex("""package\s+([A-Za-z0-9_.]+)""")
+        private val KT_TYPES_REGEX = Regex("""\b(class|interface|object|enum\s+class)\s+([A-Za-z0-9_]+)""")
+        private val KT_FUNCTIONS_REGEX = Regex("""\bfun\s+([A-Za-z0-9_]+)\s*\(|\b(public|private|protected)?\s*(static\s+)?[A-Za-z0-9_<>,?\[\] ]+\s+([A-Za-z0-9_]+)\s*\(""")
+        private val NAV_FRAGMENT_REGEX = Regex("""<fragment[^>]+android:id=[\"']@\+id/([^\"']+)[\"'][^>]+android:name=[\"']([^\"']+)[\"']""")
+        private val NAV_COMPOSE_REGEX = Regex("""composable\s*\(\s*route\s*=\s*[\"']([^\"']+)[\"']""")
+        private val NAV_NAVIGATE_REGEX = Regex("""findNavController\(\)\.navigate\([\"']([^\"']+)[\"']\)""")
+        private val NAV_ACTIVITY_REGEX = Regex("""startActivity\([^\n]+([A-Za-z0-9_]+)::class\.java""")
+        private val FOCUS_SPLIT_REGEX = Regex("[^a-z0-9_./]+")
     }
 }
