@@ -25,6 +25,11 @@ class ProjectIntegrityChecker @Inject constructor() {
         }.trim()
     }
 
+    companion object {
+        private val MANIFEST_PACKAGE_REGEX = Regex("""package\s*=\s*["']([^"']+)["']""")
+        private val JAVA_PACKAGE_REGEX = Regex("""package\s+([A-Za-z0-9_.]+)""")
+    }
+
     fun validate(project: Project, projectDir: File): IntegrityReport {
         val errors = mutableListOf<String>()
         val warnings = mutableListOf<String>()
@@ -34,8 +39,7 @@ class ProjectIntegrityChecker @Inject constructor() {
             errors += "Missing manifest: app/src/main/AndroidManifest.xml"
         } else {
             val manifestText = manifest.readText()
-            val manifestPackage = Regex("""package\s*=\s*["']([^"']+)["']""")
-                .find(manifestText)?.groupValues?.get(1)
+            val manifestPackage = MANIFEST_PACKAGE_REGEX.find(manifestText)?.groupValues?.get(1)
             if (manifestPackage.isNullOrBlank()) {
                 errors += "Manifest package is missing."
             } else if (manifestPackage != project.packageName) {
@@ -75,7 +79,7 @@ class ProjectIntegrityChecker @Inject constructor() {
         javaRoots.forEach { root ->
             root.walkTopDown().filter { it.isFile && it.extension in setOf("java", "kt") }.forEach { src ->
                 val text = src.readText()
-                val declaredPackage = Regex("""package\s+([A-Za-z0-9_.]+)""").find(text)?.groupValues?.get(1)
+                val declaredPackage = JAVA_PACKAGE_REGEX.find(text)?.groupValues?.get(1)
                 if (!declaredPackage.isNullOrBlank()) {
                     val expected = src.parentFile?.relativeTo(root)?.invariantSeparatorsPath?.replace('/', '.')?.trim('.')
                     if (!expected.isNullOrBlank() && declaredPackage != expected) {
