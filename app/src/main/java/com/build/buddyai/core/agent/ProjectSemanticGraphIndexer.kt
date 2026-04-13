@@ -193,16 +193,16 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
             files.filter { it.extension.lowercase() == "xml" || it.extension.lowercase() == "kt" || it.extension.lowercase() == "java" }.forEach { file ->
                 val relative = file.relativeTo(projectDir).invariantSeparatorsPath
                 val text = readTextCached(file)
-                Regex("""<fragment[^>]+android:id=[\"']@\+id/([^\"']+)[\"'][^>]+android:name=[\"']([^\"']+)[\"']""")
+                FRAGMENT_REGEX
                     .findAll(text)
                     .forEach { add(NavigationNode("fragment", "${it.groupValues[1]} -> ${it.groupValues[2]}", relative)) }
-                Regex("""composable\s*\(\s*route\s*=\s*[\"']([^\"']+)[\"']""")
+                COMPOSE_ROUTE_REGEX
                     .findAll(text)
                     .forEach { add(NavigationNode("compose-route", it.groupValues[1], relative)) }
-                Regex("""findNavController\(\)\.navigate\([\"']([^\"']+)[\"']\)""")
+                NAVIGATE_CALL_REGEX
                     .findAll(text)
                     .forEach { add(NavigationNode("navigate-call", it.groupValues[1], relative)) }
-                Regex("""startActivity\([^\n]+([A-Za-z0-9_]+)::class\.java""")
+                ACTIVITY_LAUNCH_REGEX
                     .findAll(text)
                     .forEach { add(NavigationNode("activity-launch", it.groupValues[1], relative)) }
             }
@@ -251,5 +251,12 @@ class ProjectSemanticGraphIndexer @Inject constructor() {
             relative.startsWith("app/build/") ||
             relative.startsWith("artifacts/") ||
             relative.startsWith("snapshots/")
+    }
+
+    companion object {
+        private val FRAGMENT_REGEX = Regex("""<fragment[^>]+android:id=[\"']@\+id/([^\"']+)[\"'][^>]+android:name=[\"']([^\"']+)[\"']""")
+        private val COMPOSE_ROUTE_REGEX = Regex("""composable\s*\(\s*route\s*=\s*[\"']([^\"']+)[\"']""")
+        private val NAVIGATE_CALL_REGEX = Regex("""findNavController\(\)\.navigate\([\"']([^\"']+)[\"']\)""")
+        private val ACTIVITY_LAUNCH_REGEX = Regex("""startActivity\([^\n]+([A-Za-z0-9_]+)::class\.java""")
     }
 }
